@@ -3,7 +3,7 @@
 Cyclone CUDA is the GPU-powered version of the **Cyclone** project, designed to achieve extreme performance in solving Satoshi puzzles on modern NVIDIA GPUs.  
 Leveraging **CUDA**, **warp-level parallelism**, and **batch EC operations**, Cyclone CUDA pushes the limits of cryptographic key search.
 
-Secp256k1 math is based on the excellent work from [JeanLucPons/VanitySearch](https://github.com/JeanLucPons/VanitySearch), with major CUDA-specific modifications.  
+Secp256k1 math is based on the excellent work from [JeanLucPons/VanitySearch](https://github.com/JeanLucPons/VanitySearch), and FixedPaul (https://github.com/FixedPaul) with major CUDA-specific modifications.  
 Special thanks to Jean-Luc Pons for his foundational contributions to the cryptographic community.
 
 Cyclone CUDA also is the **simplest CUDA-based project** for solving Satoshi puzzles on GPU.  
