@@ -6,6 +6,11 @@ Leveraging **CUDA**, **warp-level parallelism**, and **batch EC operations**, Cy
 Secp256k1 math is based on the excellent work from [JeanLucPons/VanitySearch](https://github.com/JeanLucPons/VanitySearch), with major CUDA-specific modifications.  
 Special thanks to Jean-Luc Pons for his foundational contributions to the cryptographic community.
 
+Cyclone CUDA also is the **simplest CUDA-based project** for solving Satoshi puzzles on GPU.  
+It was designed with clarity and minimalism in mind — making it easy to **compile, understand, and run**, even for those new to CUDA programming.  
+
+Despite its simplicity, Cyclone CUDA leverages **massive GPU parallelism** to achieve extreme performance in elliptic curve computations and Hash160 pipelines.
+
 ---
 
 ## 🚀 Key Features
