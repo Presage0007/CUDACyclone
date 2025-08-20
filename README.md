@@ -51,8 +51,8 @@ Public Key    : 03C060E1E3771CBECCB38E119C2414702F3F5181A89652538851D2E3886BDD70
 ```
 
 ## 🛠️ Getting Started
-To get started with CUDACyclone, clone the repository and type **make**
-**NB!** Search range must be the power of two!
+To get started with CUDACyclone, clone the repository and type **make**  
+**NB!** Search range must be the power of two!  
 
 ## ✌️**TIPS**
 BTC: bc1qtq4y9l9ajeyxq05ynq09z8p52xdmk4hqky9c8n
