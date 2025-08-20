@@ -16,6 +16,7 @@ Special thanks to Jean-Luc Pons for his foundational contributions to the crypto
 - **Grid/Batch Control**: Fully configurable GPU execution with `--grid` parameter (threads per batch × points per batch).
 - **Cross-Platform**: Works on Linux and Windows (via WSL2 or MinGW cross-compilation).
 - **Cross Architecture**: Automatic compilation for different architectures (75 86 89).
+- **Extremely low VRAM usage**: Key feature! For low price rented GPU.
 ---
 
 ## 🔷 Example Output
