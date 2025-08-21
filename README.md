@@ -3,13 +3,15 @@
 Cyclone CUDA is the GPU-powered version of the **Cyclone** project, designed to achieve extreme performance in solving Satoshi puzzles on modern NVIDIA GPUs.  
 Leveraging **CUDA**, **warp-level parallelism**, and **batch EC operations**, Cyclone CUDA pushes the limits of cryptographic key search.
 
-Secp256k1 math is based on the excellent work from [JeanLucPons/VanitySearch](https://github.com/JeanLucPons/VanitySearch), and FixedPaul (https://github.com/FixedPaul) with major CUDA-specific modifications.  
+Secp256k1 math is based on the excellent work from [JeanLucPons/VanitySearch](https://github.com/JeanLucPons/VanitySearch), and [FixedPaul/VanitySearch-Bitcrack](https://github.com/FixedPaul) with major CUDA-specific modifications.  
 Special thanks to Jean-Luc Pons for his foundational contributions to the cryptographic community.
 
 Cyclone CUDA also is the **simplest CUDA-based project** for solving Satoshi puzzles on GPU.  
 It was designed with clarity and minimalism in mind — making it easy to **compile, understand, and run**, even for those new to CUDA programming.  
 
-Despite its simplicity, Cyclone CUDA leverages **massive GPU parallelism** to achieve extreme performance in elliptic curve computations and Hash160 pipelines.
+Despite its simplicity, Cyclone CUDA leverages **massive GPU parallelism** to achieve extreme performance in elliptic curve computations and Hash160 pipelines. 
+
+⚠️ **Achieved 6Gkeys/s on RTX4090.** 
 
 ---
 
@@ -24,12 +26,20 @@ Despite its simplicity, Cyclone CUDA leverages **massive GPU parallelism** to ac
 - **Extremely low VRAM usage**: Key feature! For low price rented GPU.
 ---
 
+## 🚀 Options
+- **--range**: range of search. Must be a power of two!
+- **--address**: P2PKH address.
+- **--target-hash160**: the same as address but hash160.
+- **--grid**: very usefull parameter. Example --grid 512,512 - first 512 - number of points each thread will process in one batch (Points batch size)., second 512 - number of threads in one group (Threads per batch).
+
 ## 🔷 Example Output
 
-Below is an example run of **Cyclone CUDA**:
+Below is an example run of **Cyclone CUDA**.  
+
+**RTX4060**
 
 ```bash
-root@ubuntu:/home/ubuntu/Work/Cyclone/CUDACyclone-work# ./CUDACyclone --range 2000000000:3FFFFFFFFF --address 1HBtApAFA9B2YZw3G2YKSMCtb3dVnjuNe2 --grid 512,256
+./CUDACyclone --range 2000000000:3FFFFFFFFF --address 1HBtApAFA9B2YZw3G2YKSMCtb3dVnjuNe2 --grid 512,256
 ======== PrePhase: GPU Information ====================
 Device               : NVIDIA GeForce RTX 4060 (compute 8.9)
 SM                   : 24
@@ -47,12 +57,44 @@ Time: 8.0 s | Speed: 1268.9 Mkeys/s | Count: 10204470016 | Progress: 7.42 %
 ======== FOUND MATCH! =================================
 Private Key   : 00000000000000000000000000000000000000000000000000000022382FACD0
 Public Key    : 03C060E1E3771CBECCB38E119C2414702F3F5181A89652538851D2E3886BDD70C6
+```
 
+**RTX4090**
+```bash
+./CUDACyclone --range 400000000000000000:7fffffffffffffffff --address 1PWo3JeB9jrGwfHDNpdGK54CRas/fsVzXU --grid 512,512
+======= PrePhase: GPU Information
+Device: NVIDIA GeForce RTX 4090 (compute 8.9)
+SM                   : 128
+ThreadsPerBlock      : 256
+Blocks               : 65536
+Points batch size    : 512
+Batches/SM           : 512
+Memory utilization   : 14.5% (3.42 GB / 23.5 GB)
+------------------------------------------------------- 
+Total threads: 16777216
+
+======== Phase-1: Brooteforce =========================
+Time: 30.1 s | Speed: 6038.9 Mkeys/s | Count: 182904267648 | Progress: 0.00 %
 ```
 
 ## 🛠️ Getting Started
 To get started with CUDACyclone, clone the repository and type **make**  
+For totaly clean system:
+```bash
+apt update;
+apt-get install -y joe;
+apt-get install -y zip;
+apt-get install -y screen;
+apt-get install -y curl libcurl4;
+apt-get install build-essential;
+apt-get install -y gcc;
+apt-get install -y make;
+apt install cuda-toolkit;
+git clone https://github.com/Dookoo2/CUDACyclone.git
+make
+```
 **NB!** Search range must be the power of two!  
+
 
 ## ✌️**TIPS**
 BTC: bc1qtq4y9l9ajeyxq05ynq09z8p52xdmk4hqky9c8n
