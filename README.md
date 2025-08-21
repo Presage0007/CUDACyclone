@@ -93,7 +93,6 @@ apt install cuda-toolkit;
 git clone https://github.com/Dookoo2/CUDACyclone.git
 make
 ```
-**NB!** Search range must be the power of two!  
 
 
 ## ✌️**TIPS**
