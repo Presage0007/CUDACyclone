@@ -108,6 +108,10 @@ apt install cuda-toolkit;
 git clone https://github.com/Dookoo2/CUDACyclone.git
 make
 ```
+## 🚧**Version**
+**V1.1**: Switch pGx/pGy to constant memory due to VRAM thermal throttling  
+**V1.0**: Release
+
 
 
 ## ✌️**TIPS**
