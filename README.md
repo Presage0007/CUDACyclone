@@ -44,6 +44,7 @@ Users have reported the following speeds:
 | RTX 4090          | 512,512   | 6038 Mkeys/s    | Community report       |
 | RTX 4060          | 512,512   | 1238 Mkeys/s    | My own GPU             |
 | RTX 4070 Ti Super | 512,1024  | 3170 Mkeys/s    | Community report       |
+| L4-2Q             | 512,256   | 1360 Mkeys/s    | Community report       |
 
 ---
 
