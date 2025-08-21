@@ -34,7 +34,7 @@ __device__ __forceinline__ bool warp_found_ready(const int* __restrict__ d_found
 }
 
 #ifndef MAX_BATCH_SIZE
-#define MAX_BATCH_SIZE 256 // <-- FIX for prevent throttling ater a couple of hour work
+#define MAX_BATCH_SIZE 512
 #endif
 
 __launch_bounds__(256, 2)
@@ -410,8 +410,8 @@ int main(int argc, char** argv) {
         std::cerr << "Error: batch size must be even and a power of two.\n";
         return EXIT_FAILURE;
     }
-    if (runtime_points_batch_size > 256u) {                                          // <-- FIX for prevent throttling ater a couple of hour wor
-        std::cerr << "Error: batch size must be <= 256 (kernel limit).\n";
+    if (runtime_points_batch_size > 512u) {                                      
+        std::cerr << "Error: batch size must be <= 512 (kernel limit).\n";
         return EXIT_FAILURE;
     }
 
