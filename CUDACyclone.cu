@@ -33,15 +33,14 @@ __device__ __forceinline__ bool warp_found_ready(const int* __restrict__ d_found
     return f == FOUND_READY;
 }
 
-#ifndef MAX_BATCH_SIZE
-#define MAX_BATCH_SIZE 512
-#endif
+#ifndef MAX_BATCH_SIZE 
+#define MAX_BATCH_SIZE 512 
+#endif 
+#ifndef WARP_SIZE 
+#define WARP_SIZE 32 
+#endif 
 
-#ifndef WARP_SIZE
-#define WARP_SIZE 32
-#endif
-
-__constant__ uint64_t c_pGx[MAX_BATCH_SIZE * 4];
+__constant__ uint64_t c_pGx[MAX_BATCH_SIZE * 4]; 
 __constant__ uint64_t c_pGy[MAX_BATCH_SIZE * 4];
 
 __launch_bounds__(256, 2)
@@ -59,11 +58,25 @@ __global__ void kernel_point_add_and_check(
     unsigned long long* __restrict__ hashes_accum
 )
 {
+    // ---- sanity для batch (одинаков для всех потоков; ранний return безопасен) ----
     const int batch = (int)batch_size;
     if (batch <= 0 || (batch & 1)) return;    
     if (batch > MAX_BATCH_SIZE) return;        
     const int half  = batch >> 1;
 
+    // ---- shared tables на блок (статический размер: 2 * MAX_BATCH_SIZE * 4 * 8 = 32 КБ) ----
+    __shared__ uint64_t s_pGx[MAX_BATCH_SIZE * 4];
+    __shared__ uint64_t s_pGy[MAX_BATCH_SIZE * 4];
+
+    // ---- кооперативная загрузка только актуальной части: batch*4 элементов ----
+    const int total_limbs = batch * 4;
+    for (int idx = threadIdx.x; idx < total_limbs; idx += blockDim.x) {
+        s_pGx[idx] = c_pGx[idx];
+        s_pGy[idx] = c_pGy[idx];
+    }
+    __syncthreads(); // все потоки блока должны дойти сюда
+
+    // ---- теперь можно делать ранние выходы по gid ----
     const uint64_t gid = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
     if (gid >= threadsTotal) return;
 
@@ -142,14 +155,14 @@ __global__ void kernel_point_add_and_check(
         uint64_t acc[4], tmp[4];
 
 #pragma unroll
-        for (int j = 0; j < 4; ++j) acc[j] = c_pGx[(size_t)(batch - 1) * 4 + j];
+        for (int j = 0; j < 4; ++j) acc[j] = s_pGx[(size_t)(batch - 1) * 4 + j];
         ModSub256(acc, acc, x1);
 #pragma unroll
         for (int j = 0; j < 4; ++j) subp[half - 1][j] = acc[j];
 
         for (int i = half - 2; i >= 0; --i) {
 #pragma unroll
-            for (int j = 0; j < 4; ++j) tmp[j] = c_pGx[(size_t)(i + 1) * 4 + j];
+            for (int j = 0; j < 4; ++j) tmp[j] = s_pGx[(size_t)(i + 1) * 4 + j];
             ModSub256(tmp, tmp, x1);
             _ModMult(acc, acc, tmp);
 #pragma unroll
@@ -158,7 +171,7 @@ __global__ void kernel_point_add_and_check(
 
         uint64_t d0[4];
 #pragma unroll
-        for (int j = 0; j < 4; ++j) d0[j] = c_pGx[0 * 4 + j];
+        for (int j = 0; j < 4; ++j) d0[j] = s_pGx[0 * 4 + j];
         ModSub256(d0, d0, x1);
 
         uint64_t inverse[5];
@@ -175,7 +188,7 @@ __global__ void kernel_point_add_and_check(
             {
                 uint64_t px_i[4], py_i[4];
 #pragma unroll
-                for (int j = 0; j < 4; ++j) { px_i[j] = c_pGx[(size_t)i*4 + j]; py_i[j] = c_pGy[(size_t)i*4 + j]; }
+                for (int j = 0; j < 4; ++j) { px_i[j] = s_pGx[(size_t)i*4 + j]; py_i[j] = s_pGy[(size_t)i*4 + j]; }
 
                 uint64_t lam[4], x3[4], s[4];
                 ModSub256(s, py_i, y1);
@@ -230,7 +243,7 @@ __global__ void kernel_point_add_and_check(
             {
                 uint64_t pxn[4], pyn[4];
 #pragma unroll
-                for (int j=0;j<4;++j){ pxn[j]=c_pGx[(size_t)i*4 + j]; pyn[j]=c_pGy[(size_t)i*4 + j]; }
+                for (int j=0;j<4;++j){ pxn[j]=s_pGx[(size_t)i*4 + j]; pyn[j]=s_pGy[(size_t)i*4 + j]; }
                 ModNeg256(pyn, pyn);
 
                 uint64_t lam[4], x3[4], s[4];
@@ -281,18 +294,16 @@ __global__ void kernel_point_add_and_check(
                 }
             }
 
-
 #pragma unroll
-            for (int j = 0; j < 4; ++j) tmp[j] = c_pGx[(size_t)i*4 + j];
+            for (int j = 0; j < 4; ++j) tmp[j] = s_pGx[(size_t)i*4 + j];
             ModSub256(tmp, tmp, x1);
             _ModMult(inverse, tmp);
         }
 
-
         {
             uint64_t px_last[4], py_last[4];
 #pragma unroll
-            for (int j = 0; j < 4; ++j) { px_last[j]=c_pGx[(size_t)(batch-1)*4 + j]; py_last[j]=c_pGy[(size_t)(batch-1)*4 + j]; }
+            for (int j = 0; j < 4; ++j) { px_last[j]=s_pGx[(size_t)(batch-1)*4 + j]; py_last[j]=s_pGy[(size_t)(batch-1)*4 + j]; }
 
             uint64_t lam[4], x3[4], s[4];
             ModSub256(s, py_last, y1);
@@ -596,6 +607,7 @@ int main(int argc, char** argv) {
         cudaDeviceSynchronize();
     }
 
+    // ---------- подготовка таблиц pGx/pGy и запись сразу в __constant__ (D2D) ----------
     {
         const uint32_t B = runtime_points_batch_size;
 
@@ -603,6 +615,7 @@ int main(int argc, char** argv) {
         cudaMalloc(&d_pGx, (size_t)B * 4 * sizeof(uint64_t));
         cudaMalloc(&d_pGy, (size_t)B * 4 * sizeof(uint64_t));
 
+        // Скаляры 1..B
         uint64_t* h_scal = new uint64_t[(size_t)B * 4];
         std::memset(h_scal, 0, (size_t)B * 4 * sizeof(uint64_t));
         for (uint32_t k = 0; k < B; ++k) h_scal[(size_t)k*4 + 0] = (uint64_t)(k + 1);
@@ -615,15 +628,10 @@ int main(int argc, char** argv) {
         scalarMulKernelBase<<<blocks_scal, threadsPerBlock>>>(d_pG_scalars, d_pGx, d_pGy, (int)B);
         cudaDeviceSynchronize();
 
-        uint64_t* h_pGx = new uint64_t[(size_t)B * 4];
-        uint64_t* h_pGy = new uint64_t[(size_t)B * 4];
-        cudaMemcpy(h_pGx, d_pGx, (size_t)B * 4 * sizeof(uint64_t), cudaMemcpyDeviceToHost);
-        cudaMemcpy(h_pGy, d_pGy, (size_t)B * 4 * sizeof(uint64_t), cudaMemcpyDeviceToHost);
-        cudaMemcpyToSymbol(c_pGx, h_pGx, (size_t)B * 4 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice);
-        cudaMemcpyToSymbol(c_pGy, h_pGy, (size_t)B * 4 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice);
+        // Прямая копия с девайса в __constant__ (без промежуточного хоста)
+        cudaMemcpyToSymbol(c_pGx, d_pGx, (size_t)B * 4 * sizeof(uint64_t), 0, cudaMemcpyDeviceToDevice);
+        cudaMemcpyToSymbol(c_pGy, d_pGy, (size_t)B * 4 * sizeof(uint64_t), 0, cudaMemcpyDeviceToDevice);
 
-        delete[] h_pGx;
-        delete[] h_pGy;
         cudaFree(d_pG_scalars);
         delete[] h_scal;
         cudaFree(d_pGx);
@@ -653,7 +661,12 @@ int main(int argc, char** argv) {
     cudaStream_t streamKernel;
     cudaStreamCreateWithFlags(&streamKernel, cudaStreamNonBlocking);
 
-    cudaFuncSetCacheConfig(kernel_point_add_and_check, cudaFuncCachePreferL1);
+    // для shared-кеша
+    cudaFuncSetCacheConfig(kernel_point_add_and_check, cudaFuncCachePreferShared);
+    // опционально: максимально возможный carve-out в shared (если доступно)
+    (void)cudaFuncSetAttribute(kernel_point_add_and_check,
+                               cudaFuncAttributePreferredSharedMemoryCarveout,
+                               100);
 
     auto t0 = std::chrono::high_resolution_clock::now();
     auto tLast = t0;
@@ -664,7 +677,7 @@ int main(int argc, char** argv) {
         d_start_scalars,
         d_counts256,
         threadsTotal,
-        runtime_points_batch_size, 
+        runtime_points_batch_size,
         d_found_flag, d_found_result,
         d_hashes_accum
     );
