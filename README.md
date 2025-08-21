@@ -79,7 +79,7 @@ Time: 30.1 s | Speed: 6038.9 Mkeys/s | Count: 182904267648 | Progress: 0.00 %
 
 ## 🛠️ Getting Started
 To get started with CUDACyclone, clone the repository and type **make**  
-For totaly clean system (big thanks for dev_nullish):
+For totaly clean system (big thanks for **dev_nullish**):
 ```bash
 apt update;
 apt-get install -y joe;
