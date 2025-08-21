@@ -58,25 +58,21 @@ __global__ void kernel_point_add_and_check(
     unsigned long long* __restrict__ hashes_accum
 )
 {
-    // ---- sanity для batch (одинаков для всех потоков; ранний return безопасен) ----
     const int batch = (int)batch_size;
     if (batch <= 0 || (batch & 1)) return;    
     if (batch > MAX_BATCH_SIZE) return;        
     const int half  = batch >> 1;
 
-    // ---- shared tables на блок (статический размер: 2 * MAX_BATCH_SIZE * 4 * 8 = 32 КБ) ----
     __shared__ uint64_t s_pGx[MAX_BATCH_SIZE * 4];
     __shared__ uint64_t s_pGy[MAX_BATCH_SIZE * 4];
 
-    // ---- кооперативная загрузка только актуальной части: batch*4 элементов ----
     const int total_limbs = batch * 4;
     for (int idx = threadIdx.x; idx < total_limbs; idx += blockDim.x) {
         s_pGx[idx] = c_pGx[idx];
         s_pGy[idx] = c_pGy[idx];
     }
-    __syncthreads(); // все потоки блока должны дойти сюда
+    __syncthreads(); 
 
-    // ---- теперь можно делать ранние выходы по gid ----
     const uint64_t gid = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
     if (gid >= threadsTotal) return;
 
@@ -607,7 +603,6 @@ int main(int argc, char** argv) {
         cudaDeviceSynchronize();
     }
 
-    // ---------- подготовка таблиц pGx/pGy и запись сразу в __constant__ (D2D) ----------
     {
         const uint32_t B = runtime_points_batch_size;
 
@@ -615,7 +610,6 @@ int main(int argc, char** argv) {
         cudaMalloc(&d_pGx, (size_t)B * 4 * sizeof(uint64_t));
         cudaMalloc(&d_pGy, (size_t)B * 4 * sizeof(uint64_t));
 
-        // Скаляры 1..B
         uint64_t* h_scal = new uint64_t[(size_t)B * 4];
         std::memset(h_scal, 0, (size_t)B * 4 * sizeof(uint64_t));
         for (uint32_t k = 0; k < B; ++k) h_scal[(size_t)k*4 + 0] = (uint64_t)(k + 1);
@@ -628,7 +622,6 @@ int main(int argc, char** argv) {
         scalarMulKernelBase<<<blocks_scal, threadsPerBlock>>>(d_pG_scalars, d_pGx, d_pGy, (int)B);
         cudaDeviceSynchronize();
 
-        // Прямая копия с девайса в __constant__ (без промежуточного хоста)
         cudaMemcpyToSymbol(c_pGx, d_pGx, (size_t)B * 4 * sizeof(uint64_t), 0, cudaMemcpyDeviceToDevice);
         cudaMemcpyToSymbol(c_pGy, d_pGy, (size_t)B * 4 * sizeof(uint64_t), 0, cudaMemcpyDeviceToDevice);
 
@@ -661,9 +654,8 @@ int main(int argc, char** argv) {
     cudaStream_t streamKernel;
     cudaStreamCreateWithFlags(&streamKernel, cudaStreamNonBlocking);
 
-    // для shared-кеша
+
     cudaFuncSetCacheConfig(kernel_point_add_and_check, cudaFuncCachePreferShared);
-    // опционально: максимально возможный carve-out в shared (если доступно)
     (void)cudaFuncSetAttribute(kernel_point_add_and_check,
                                cudaFuncAttributePreferredSharedMemoryCarveout,
                                100);
