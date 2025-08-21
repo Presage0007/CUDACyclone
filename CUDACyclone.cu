@@ -63,8 +63,9 @@ __global__ void kernel_point_add_and_check(
     if (batch > MAX_BATCH_SIZE) return;        
     const int half  = batch >> 1;
 
-    __shared__ uint64_t s_pGx[MAX_BATCH_SIZE * 4];
-    __shared__ uint64_t s_pGy[MAX_BATCH_SIZE * 4];
+    extern __shared__ uint64_t s_mem[];
+    uint64_t* s_pGx = s_mem;
+    uint64_t* s_pGy = s_pGx + (size_t)batch * 4;
 
     const int total_limbs = batch * 4;
     for (int idx = threadIdx.x; idx < total_limbs; idx += blockDim.x) {
@@ -654,7 +655,6 @@ int main(int argc, char** argv) {
     cudaStream_t streamKernel;
     cudaStreamCreateWithFlags(&streamKernel, cudaStreamNonBlocking);
 
-
     cudaFuncSetCacheConfig(kernel_point_add_and_check, cudaFuncCachePreferShared);
     (void)cudaFuncSetAttribute(kernel_point_add_and_check,
                                cudaFuncAttributePreferredSharedMemoryCarveout,
@@ -664,7 +664,9 @@ int main(int argc, char** argv) {
     auto tLast = t0;
     unsigned long long lastHashes = 0ull;
 
-    kernel_point_add_and_check<<<blocks, threadsPerBlock, 0, streamKernel>>>(
+    size_t sharedBytes = (size_t)runtime_points_batch_size * 4 * sizeof(uint64_t) * 2; // pGx + pGy
+
+    kernel_point_add_and_check<<<blocks, threadsPerBlock, sharedBytes, streamKernel>>>(
         d_Px, d_Py, d_Rx, d_Ry,
         d_start_scalars,
         d_counts256,
