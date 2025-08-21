@@ -32,6 +32,17 @@ Despite its simplicity, Cyclone CUDA leverages **massive GPU parallelism** to ac
 - **--target-hash160**: the same as address but hash160.
 - **--grid**: very usefull parameter. Example --grid 512,512 - first 512 - number of points each thread will process in one batch (Points batch size)., second 512 - number of threads in one group (Threads per batch).
 
+### ❔ Community benchmarks
+
+Users have reported the following speeds:
+
+| GPU               | Grid      | Speed (Mkeys/s) | Notes                  |
+|-------------------|-----------|-----------------|------------------------|
+| RTX 4090          | 128,1024  | 6214 Mkeys/s    | Community report       |
+| RTX 4090          | 512,512   | 6038 Mkeys/s    | Community report       |
+| RTX 4060          | 512,512   | 1238 Mkeys/s    | My own GPU             |
+| RTX 4070 Ti Super | 512,1024  | 3170 Mkeys/s    | Community report       |
+
 ## 🔷 Example Output
 
 Below is an example run of **Cyclone CUDA**.  
