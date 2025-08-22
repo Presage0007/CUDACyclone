@@ -34,7 +34,7 @@ __device__ __forceinline__ bool warp_found_ready(const int* __restrict__ d_found
 }
 
 #ifndef MAX_BATCH_SIZE 
-#define MAX_BATCH_SIZE 512 
+#define MAX_BATCH_SIZE 256 
 #endif 
 #ifndef WARP_SIZE 
 #define WARP_SIZE 32 
@@ -656,9 +656,6 @@ int main(int argc, char** argv) {
     cudaStreamCreateWithFlags(&streamKernel, cudaStreamNonBlocking);
 
     cudaFuncSetCacheConfig(kernel_point_add_and_check, cudaFuncCachePreferShared);
-    (void)cudaFuncSetAttribute(kernel_point_add_and_check,
-                               cudaFuncAttributePreferredSharedMemoryCarveout,
-                               100);
 
     auto t0 = std::chrono::high_resolution_clock::now();
     auto tLast = t0;
