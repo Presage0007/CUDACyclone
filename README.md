@@ -12,7 +12,6 @@ It was designed with clarity and minimalism in mind — making it easy to **comp
 Despite its simplicity, Cyclone CUDA leverages **massive GPU parallelism** to achieve extreme performance in elliptic curve computations and Hash160 pipelines. 
 
 ⚠️ **Achieved 6Gkeys/s on RTX4090.**  
-⚠️ **After a couple of hour VRAM GDDR6X on Ada Lowelace GPU architecture could start throttling due to overheating!**
 
 ---
 
