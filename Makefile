@@ -8,7 +8,7 @@ NVCC        ?= nvcc
 DETECTED_CC := $(shell command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -n1 | tr -d '.' || echo)
 
 # Default architectures (add/remove as needed)
-SM_ARCHS    := 75 86 89
+SM_ARCHS    := 75 86 89 90
 ifneq ($(DETECTED_CC),)
   SM_ARCHS  += $(DETECTED_CC)
 endif
