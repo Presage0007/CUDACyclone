@@ -34,30 +34,33 @@ Despite its simplicity, CUDACyclone leverages **massive GPU parallelism** to ach
 
 - `--range <start_hex>:<end_hex>`  
   Range to search (inclusive).  
-  ⚠️ **Length must be a power of 2**, and **start must be aligned** accordingly.
+  ⚠️ **Length must be a power of 2**, **start must be aligned**, and **length must be divisible by the batch size `A`** (see `--grid`).
 
 - `--address <base58>`  
-  Target P2PKH address (e.g. 1PWo3Je...).
+  Target **P2PKH** address (e.g. `1PWo3Je...`).  
+  *Mutually exclusive with* `--target-hash160`.
 
 - `--target-hash160 <hex>`  
-  Optional alternative to `--address`. Directly specify HASH160.
+  Optional alternative to `--address`. Directly specify **20-byte HASH160** in hex.  
+  *Mutually exclusive with* `--address`.
 
 - `--grid A,B`  
   GPU launch configuration.  
-  - `A` = Points batch size (per thread, per batch)  
-  - `B` = Batches per SM  
+  - `A` = **Points batch size** (per thread, per batch). Must be an **even power of two**. Clamped to `MAX_BATCH_SIZE`.  
+  - `B` = **Batches per SM**  
   Example: `--grid 512,256`
 
 - `--steps <K>`  
   Number of **consecutive lots** per thread launch.  
-  Must divide the total number of lots (`range_len / batch`).  
+  Must divide the total number of lots (`range_len / A`).  
   Default: `16`
 
 - `--seed <N>`  
-  Sets seed for random permutation. Only used in full-random mode.
+  Sets **seed** for random permutation. Only used in **full-random mode**.  
+  Ignored when `--deterministic` is set.
 
 - `--deterministic`  
-  Disables random permutation. Scans the range sequentially, group by group.
+  Disables random permutation. Scans the range **sequentially, group by group**.
 
 ---
 
