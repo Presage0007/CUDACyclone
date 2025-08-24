@@ -1,35 +1,36 @@
+#pragma once
+#include <stdint.h>
+
 #define NBBLOCK 5
 #define BIFULLSIZE 40
 
-
 #define UADDO(c, a, b) asm volatile ("add.cc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b) : "memory" );
 #define UADDC(c, a, b) asm volatile ("addc.cc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b) : "memory" );
-#define UADD(c, a, b) asm volatile ("addc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b));
+#define UADD(c, a, b)  asm volatile ("addc.u64 %0, %1, %2;"    : "=l"(c) : "l"(a), "l"(b));
 
-#define UADDO1(c, a) asm volatile ("add.cc.u64 %0, %0, %1;" : "+l"(c) : "l"(a) : "memory" );
-#define UADDC1(c, a) asm volatile ("addc.cc.u64 %0, %0, %1;" : "+l"(c) : "l"(a) : "memory" );
-#define UADD1(c, a) asm volatile ("addc.u64 %0, %0, %1;" : "+l"(c) : "l"(a));
+#define UADDO1(c, a)   asm volatile ("add.cc.u64 %0, %0, %1;"  : "+l"(c) : "l"(a) : "memory" );
+#define UADDC1(c, a)   asm volatile ("addc.cc.u64 %0, %0, %1;" : "+l"(c) : "l"(a) : "memory" );
+#define UADD1(c, a)    asm volatile ("addc.u64 %0, %0, %1;"    : "+l"(c) : "l"(a));
 
-#define USUBO(c, a, b) asm volatile ("sub.cc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b) : "memory" );
+#define USUBO(c, a, b) asm volatile ("sub.cc.u64 %0, %1, %2;"  : "=l"(c) : "l"(a), "l"(b) : "memory" );
 #define USUBC(c, a, b) asm volatile ("subc.cc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b) : "memory" );
-#define USUB(c, a, b) asm volatile ("subc.u64 %0, %1, %2;" : "=l"(c) : "l"(a), "l"(b));
+#define USUB(c, a, b)  asm volatile ("subc.u64 %0, %1, %2;"    : "=l"(c) : "l"(a), "l"(b));
 
-#define USUBO1(c, a) asm volatile ("sub.cc.u64 %0, %0, %1;" : "+l"(c) : "l"(a) : "memory" );
-#define USUBC1(c, a) asm volatile ("subc.cc.u64 %0, %0, %1;" : "+l"(c) : "l"(a) : "memory" );
-#define USUB1(c, a) asm volatile ("subc.u64 %0, %0, %1;" : "+l"(c) : "l"(a) );
+#define USUBO1(c, a)   asm volatile ("sub.cc.u64 %0, %0, %1;"  : "+l"(c) : "l"(a) : "memory" );
+#define USUBC1(c, a)   asm volatile ("subc.cc.u64 %0, %0, %1;" : "+l"(c) : "l"(a) : "memory" );
+#define USUB1(c, a)    asm volatile ("subc.u64 %0, %0, %1;"    : "+l"(c) : "l"(a) );
 
-#define UMULLO(lo,a, b) asm volatile ("mul.lo.u64 %0, %1, %2;" : "=l"(lo) : "l"(a), "l"(b));
-#define UMULHI(hi,a, b) asm volatile ("mul.hi.u64 %0, %1, %2;" : "=l"(hi) : "l"(a), "l"(b));
+#define UMULLO(lo,a,b) asm volatile ("mul.lo.u64 %0, %1, %2;"  : "=l"(lo) : "l"(a), "l"(b));
+#define UMULHI(hi,a,b) asm volatile ("mul.hi.u64 %0, %1, %2;"  : "=l"(hi) : "l"(a), "l"(b));
 #define MADDO(r,a,b,c) asm volatile ("mad.hi.cc.u64 %0, %1, %2, %3;" : "=l"(r) : "l"(a), "l"(b), "l"(c) : "memory" );
 #define MADDC(r,a,b,c) asm volatile ("madc.hi.cc.u64 %0, %1, %2, %3;" : "=l"(r) : "l"(a), "l"(b), "l"(c) : "memory" );
-#define MADD(r,a,b,c) asm volatile ("madc.hi.u64 %0, %1, %2, %3;" : "=l"(r) : "l"(a), "l"(b), "l"(c));
-#define MADDS(r,a,b,c) asm volatile ("madc.hi.s64 %0, %1, %2, %3;" : "=l"(r) : "l"(a), "l"(b), "l"(c));
-
+#define MADD(r,a,b,c)  asm volatile ("madc.hi.u64 %0, %1, %2, %3;"    : "=l"(r) : "l"(a), "l"(b), "l"(c));
+#define MADDS(r,a,b,c) asm volatile ("madc.hi.s64 %0, %1, %2, %3;"    : "=l"(r) : "l"(a), "l"(b), "l"(c));
 
 #define HSIZE (GRP_SIZE / 2 - 1)
 
-__device__ __constant__ uint64_t MM64 = 0xD838091DD2253531ULL;
-__device__ __constant__ uint64_t MSK62 = 0x3FFFFFFFFFFFFFFFULL;
+__device__ __constant__ uint64_t MM64  = 0xD838091DD2253531ULL;
+__device__ __constant__ uint64_t MSK62 = 0x3FFFFFFFFFFFFFFFULL; // 62 bits mask
 
 #define _IsPositive(x) (((int64_t)(x[4]))>=0LL)
 #define _IsNegative(x) (((int64_t)(x[4]))<0LL)
@@ -38,11 +39,10 @@ __device__ __constant__ uint64_t MSK62 = 0x3FFFFFFFFFFFFFFFULL;
 #define _IsOne(a)      ((a[4] == 0ULL) && (a[3] == 0ULL) && (a[2] == 0ULL) && (a[1] == 0ULL) && (a[0] == 1ULL))
 
 #define IDX threadIdx.x
-
 #define bswap32(v) __byte_perm(v, 0, 0x0123)
 
 #define __sright128(a,b,n) ((a)>>(n))|((b)<<(64-(n)))
-#define __sleft128(a,b,n) ((b)<<(n))|((a)>>(64-(n)))
+#define __sleft128(a,b,n)  ((b)<<(n))|((a)>>(64-(n)))
 
 #define AddP(r) { \
   UADDO1(r[0], 0xFFFFFFFEFFFFFC2FULL); \
@@ -77,11 +77,11 @@ __device__ __constant__ uint64_t MSK62 = 0x3FFFFFFFFFFFFFFFULL;
   UADD1((r)[1], (a)[1]);}
 
 #define Neg(r) {\
-USUBO(r[0],0ULL,r[0]); \
-USUBC(r[1],0ULL,r[1]); \
-USUBC(r[2],0ULL,r[2]); \
-USUBC(r[3],0ULL,r[3]); \
-USUB(r[4],0ULL,r[4]); }
+  USUBO(r[0],0ULL,r[0]); \
+  USUBC(r[1],0ULL,r[1]); \
+  USUBC(r[2],0ULL,r[2]); \
+  USUBC(r[3],0ULL,r[3]); \
+  USUB(r[4],0ULL,r[4]); }
 
 #define UMult(r, a, b) {\
   UMULLO(r[0],a[0],b); \
@@ -115,43 +115,35 @@ USUB(r[4],0ULL,r[4]); }
   (r)[3] = (a)[3];}
 
 __device__ void ShiftR62(uint64_t r[5]) {
-
   r[0] = (r[1] << 2) | (r[0] >> 62);
   r[1] = (r[2] << 2) | (r[1] >> 62);
   r[2] = (r[3] << 2) | (r[2] >> 62);
   r[3] = (r[4] << 2) | (r[3] >> 62);
   r[4] = (int64_t)(r[4]) >> 62;
-
 }
 
-__device__ void ModSub256isOdd(uint64_t* a, uint64_t* b, uint8_t* parity) {    //no need to compute py, we need only parity
+__device__ void ModSub256isOdd(uint64_t* a, uint64_t* b, uint8_t* parity) { // only parity
+    uint64_t t;
+    uint64_t T[4];
 
-    uint64_t t;   
-    uint64_t T[4]; 
+    USUBO(T[0], a[0], b[0]);
+    USUBC(T[1], a[1], b[1]);
+    USUBC(T[2], a[2], b[2]);
+    USUBC(T[3], a[3], b[3]);
 
-    USUBO(T[0], a[0], b[0]);   
-    USUBC(T[1], a[1], b[1]);   
-    USUBC(T[2], a[2], b[2]);   
-    USUBC(T[3], a[3], b[3]);  
-
-    USUB(t, 0ULL, 0ULL);  // borrow
-
-    *parity = (T[0] & 1) ^ (t & 1);  // LSB of T[0] and LSB of t -> parity od sub
+    USUB(t, 0ULL, 0ULL);  // final borrow in t
+    *parity = (T[0] & 1) ^ (t & 1);
 }
-
 
 __device__ void ShiftR62(uint64_t dest[5],uint64_t r[5],uint64_t carry) {
-
   dest[0] = (r[1] << 2) | (r[0] >> 62);
   dest[1] = (r[2] << 2) | (r[1] >> 62);
   dest[2] = (r[3] << 2) | (r[2] >> 62);
   dest[3] = (r[4] << 2) | (r[3] >> 62);
   dest[4] = (carry << 2) | (r[4] >> 62);
-
 }
 
 __device__ void IMult(uint64_t *r,uint64_t *a,int64_t b) {
-
   uint64_t t[NBBLOCK];
 
   if(b < 0) {
@@ -174,11 +166,9 @@ __device__ void IMult(uint64_t *r,uint64_t *a,int64_t b) {
   MADDC(r[3],t[2],b,r[3]);
   UMULLO(r[4],t[4],b);
   MADD(r[4],t[3],b,r[4]);
-
 }
 
 __device__ uint64_t IMultC(uint64_t* r,uint64_t* a,int64_t b) {
-
   uint64_t t[NBBLOCK];
   uint64_t carry;
 
@@ -205,14 +195,10 @@ __device__ uint64_t IMultC(uint64_t* r,uint64_t* a,int64_t b) {
   MADDS(carry,t[4],b,0ULL);
 
   return carry;
-
 }
 
 __device__ void MulP(uint64_t *r,uint64_t a) {
-
-  uint64_t ah;
-  uint64_t al;
-
+  uint64_t ah, al;
   UMULLO(al,a,0x1000003D1ULL);
   UMULHI(ah,a,0x1000003D1ULL);
 
@@ -221,11 +207,9 @@ __device__ void MulP(uint64_t *r,uint64_t a) {
   USUBC(r[2],0ULL,0ULL);
   USUBC(r[3],0ULL,0ULL);
   USUB(r[4],a,0ULL);
-
 }
 
 __device__ void ModNeg256(uint64_t *r,uint64_t *a) {
-
   uint64_t t[4];
   USUBO(t[0],0ULL,a[0]);
   USUBC(t[1],0ULL,a[1]);
@@ -235,11 +219,9 @@ __device__ void ModNeg256(uint64_t *r,uint64_t *a) {
   UADDC(r[1],t[1],0xFFFFFFFFFFFFFFFFULL);
   UADDC(r[2],t[2],0xFFFFFFFFFFFFFFFFULL);
   UADD(r[3],t[3],0xFFFFFFFFFFFFFFFFULL);
-
 }
 
 __device__ void ModNeg256(uint64_t *r) {
-
   uint64_t t[4];
   USUBO(t[0],0ULL,r[0]);
   USUBC(t[1],0ULL,r[1]);
@@ -249,11 +231,9 @@ __device__ void ModNeg256(uint64_t *r) {
   UADDC(r[1],t[1],0xFFFFFFFFFFFFFFFFULL);
   UADDC(r[2],t[2],0xFFFFFFFFFFFFFFFFULL);
   UADD(r[3],t[3],0xFFFFFFFFFFFFFFFFULL);
-
 }
 
 __device__ void ModSub256(uint64_t *r,uint64_t *a,uint64_t *b) {
-
     uint64_t borrow;
     uint64_t p[4] = { 0xFFFFFFFEFFFFFC2FULL, 0xFFFFFFFFFFFFFFFFULL,
                       0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFFFFULL };
@@ -262,7 +242,7 @@ __device__ void ModSub256(uint64_t *r,uint64_t *a,uint64_t *b) {
     USUBC(r[1], a[1], b[1]);
     USUBC(r[2], a[2], b[2]);
     USUBC(r[3], a[3], b[3]);
-    USUB(borrow, 0ULL, 0ULL); 
+    USUB(borrow, 0ULL, 0ULL);
 
     if (borrow) {
         UADDO1(r[0], p[0]);
@@ -271,8 +251,8 @@ __device__ void ModSub256(uint64_t *r,uint64_t *a,uint64_t *b) {
         UADD1(r[3], p[3]);
     }
 }
-__device__ void ModSub256(uint64_t* r,uint64_t* b) {
 
+__device__ void ModSub256(uint64_t* r,uint64_t* b) {
     uint64_t borrow;
     uint64_t p[4] = { 0xFFFFFFFEFFFFFC2FULL, 0xFFFFFFFFFFFFFFFFULL,
                       0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFFFFULL };
@@ -281,7 +261,7 @@ __device__ void ModSub256(uint64_t* r,uint64_t* b) {
     USUBC1(r[1], b[1]);
     USUBC1(r[2], b[2]);
     USUBC1(r[3], b[3]);
-    USUB(borrow, 0ULL, 0ULL); 
+    USUB(borrow, 0ULL, 0ULL);
 
     if (borrow) {
         UADDO1(r[0], p[0]);
@@ -292,20 +272,16 @@ __device__ void ModSub256(uint64_t* r,uint64_t* b) {
 }
 
 #ifdef USE_SYMMETRY
-
 __device__ bool ModPositive256(uint64_t *r) {
-
   if(r[3] > 0x7FFFFFFFFFFFFFFFULL) {
     ModNeg256(r);
     return true;
   } else {
     return false;
   }
-
 }
 
 __device__ void ModNeg256Order(uint64_t* r) {
-
   uint64_t t[4];
   USUBO(t[0],0ULL,r[0]);
   USUBC(t[1],0ULL,r[1]);
@@ -315,11 +291,7 @@ __device__ void ModNeg256Order(uint64_t* r) {
   UADDC(r[1],t[1],_O[1]);
   UADDC(r[2],t[2],_O[2]);
   UADD(r[3],t[3],_O[3]);
-
 }
-
-
-
 #endif
 
 __device__ __forceinline__ uint32_t ctz(uint64_t x) {
@@ -334,7 +306,6 @@ __device__ __forceinline__ uint32_t ctz(uint64_t x) {
 }
 
 #define SWAP(tmp,x,y) tmp = x; x = y; y = tmp;
-#define MSK62 0x3FFFFFFFFFFFFFFF
 
 __device__ void _DivStep62(uint64_t u[5],uint64_t v[5],
                            int32_t *pos,
@@ -354,13 +325,11 @@ __device__ void _DivStep62(uint64_t u[5],uint64_t v[5],
   bitCount = 62;
 
   while(*pos > 0 && (u[*pos] | v[*pos]) == 0) (*pos)--;
-  if(*pos == 0) {
 
+  if(*pos == 0) {
     uh = u[0];
     vh = v[0];
-
   } else {
-
     uint32_t s = __clzll(u[*pos] | v[*pos]);
     if(s == 0) {
       uh = u[*pos];
@@ -369,14 +338,10 @@ __device__ void _DivStep62(uint64_t u[5],uint64_t v[5],
       uh = __sleft128(u[*pos - 1],u[*pos],s);
       vh = __sleft128(v[*pos - 1],v[*pos],s);
     }
-
   }
 
-
   while(true) {
-
     zeros = ctz(v0 | (1ULL << bitCount));
-
     v0 >>= zeros;
     vh >>= zeros;
     *uu <<= zeros;
@@ -397,13 +362,10 @@ __device__ void _DivStep62(uint64_t u[5],uint64_t v[5],
     v0 -= u0;
     *vv -= *uv;
     *vu -= *uu;
-
   }
-
 }
 
 __device__ void MatrixVecMulHalf(uint64_t dest[5],uint64_t u[5],uint64_t v[5],int64_t _11,int64_t _12,uint64_t* carry) {
-
   uint64_t t1[NBBLOCK];
   uint64_t t2[NBBLOCK];
   uint64_t c1,c2;
@@ -417,11 +379,9 @@ __device__ void MatrixVecMulHalf(uint64_t dest[5],uint64_t u[5],uint64_t v[5],in
   UADDC(dest[3],t1[3],t2[3]);
   UADDC(dest[4],t1[4],t2[4]);
   UADD(*carry,c1,c2);
-
 }
 
 __device__ void MatrixVecMul(uint64_t u[5],uint64_t v[5],int64_t _11,int64_t _12,int64_t _21,int64_t _22) {
-
   uint64_t t1[NBBLOCK];
   uint64_t t2[NBBLOCK];
   uint64_t t3[NBBLOCK];
@@ -443,11 +403,9 @@ __device__ void MatrixVecMul(uint64_t u[5],uint64_t v[5],int64_t _11,int64_t _12
   UADDC(v[2],t3[2],t4[2]);
   UADDC(v[3],t3[3],t4[3]);
   UADD(v[4],t3[4],t4[4]);
-
 }
 
 __device__ uint64_t AddCh(uint64_t r[5],uint64_t a[5],uint64_t carry) {
-
   uint64_t carryOut;
 
   UADDO1(r[0], a[0]);
@@ -458,16 +416,10 @@ __device__ uint64_t AddCh(uint64_t r[5],uint64_t a[5],uint64_t carry) {
   UADD(carryOut,carry,0ULL);
 
   return carryOut;
-
 }
 
 __device__ __noinline__ void _ModInv(uint64_t* R) {
-
-    // Compute modular inverse of R mop P (using 320bits signed integer)
-    // 0 < this < P  , P must be odd
-    // Return 0 if no inverse
-    // See IntMod.cpp for more info.
-
+    // Inverse mod P (uses 320 signed bits)
     int64_t  uu, uv, vu, vv;
     uint64_t mr0, ms0;
     int32_t  pos = NBBLOCK - 1;
@@ -495,26 +447,12 @@ __device__ __noinline__ void _ModInv(uint64_t* R) {
     r[3] = 0; s[3] = 0;
     r[4] = 0; s[4] = 0;
 
-    // Delayed right shift 62bits
-
-    // DivStep loop -------------------------------
-
     while (true) {
-
         _DivStep62(u, v, &pos, &uu, &uv, &vu, &vv);
-
         MatrixVecMul(u, v, uu, uv, vu, vv);
 
-        if (_IsNegative(u)) {
-            Neg(u);
-            uu = -uu;
-            uv = -uv;
-        }
-        if (_IsNegative(v)) {
-            Neg(v);
-            vu = -vu;
-            vv = -vv;
-        }
+        if (_IsNegative(u)) { Neg(u); uu = -uu; uv = -uv; }
+        if (_IsNegative(v)) { Neg(v); vu = -vu; vv = -vv; }
 
         ShiftR62(u);
         ShiftR62(v);
@@ -526,49 +464,35 @@ __device__ __noinline__ void _ModInv(uint64_t* R) {
         carryR = AddCh(tr, r0, carryR);
 
         if (_IsZero(v)) {
-
             ShiftR62(r, tr, carryR);
             break;
-
-        }
-        else {
-
+        } else {
             // Update s
             MatrixVecMulHalf(ts, r, s, vu, vv, &carryS);
             ms0 = (ts[0] * MM64) & MSK62;
             MulP(s0, ms0);
             carryS = AddCh(ts, s0, carryS);
-
         }
 
         ShiftR62(r, tr, carryR);
         ShiftR62(s, ts, carryS);
-
     }
 
     // u ends with gcd
     if (!_IsOne(u)) {
         // No inverse
-        R[0] = 0ULL;
-        R[1] = 0ULL;
-        R[2] = 0ULL;
-        R[3] = 0ULL;
-        R[4] = 0ULL;
+        R[0] = R[1] = R[2] = R[3] = R[4] = 0ULL;
         return;
     }
 
-    while (_IsNegative(r))
-        AddP(r);
-    while (!_IsNegative(r))
-        SubP(r);
+    while (_IsNegative(r)) AddP(r);
+    while (!_IsNegative(r)) SubP(r);
     AddP(r);
-
     Load(R, r);
-
 }
 
 #define UMultSpecial(r, a) {\
-  uint64_t temp; /* Dichiarazione di temp qui */\
+  uint64_t temp; \
   r[0] = (a[0] << 32) + (a[0] << 9) + (a[0] << 8) + (a[0] << 7) + (a[0] << 6) + (a[0] << 4) + a[0]; \
   r[1] = (a[1] << 32) + (a[1] << 9) + (a[1] << 8) + (a[1] << 7) + (a[1] << 6) + (a[1] << 4) + a[1]; \
   MADDO(r[1], a[0], 0x1000003D1ULL, r[1]); \
@@ -581,18 +505,14 @@ __device__ __noinline__ void _ModInv(uint64_t* R) {
   MADD(r[4], a[3], 0x1000003D1ULL, 0ULL); \
 }
 
-
 __device__ void _ModMult(uint64_t *r, uint64_t *a, uint64_t *b) {
-
   uint64_t r512[8];
   uint64_t t[NBBLOCK];
   uint64_t ah, al;
 
-  r512[5] = 0;
-  r512[6] = 0;
-  r512[7] = 0;
+  r512[5] = r512[6] = r512[7] = 0;
 
-  // 256*256 multiplier
+  // 256*256
   UMult(r512, a, b[0]);
   UMult(t, a, b[1]);
   UADDO1(r512[1], t[0]);
@@ -613,15 +533,14 @@ __device__ void _ModMult(uint64_t *r, uint64_t *a, uint64_t *b) {
   UADDC1(r512[6], t[3]);
   UADD1(r512[7], t[4]);
 
-  // Reduce from 512 to 320
-  //UMult(t, (r512 + 4), 0x1000003D1ULL);
+  // 512 -> 320
   UMultSpecial(t, (r512 + 4));
   UADDO1(r512[0], t[0]);
   UADDC1(r512[1], t[1]);
   UADDC1(r512[2], t[2]);
   UADDC1(r512[3], t[3]);
 
-  // Reduce from 320 to 256
+  // 320 -> 256
   UADD1(t[4], 0ULL);
   UMULLO(al, t[4], 0x1000003D1ULL);
   UMULHI(ah, t[4], 0x1000003D1ULL);
@@ -629,22 +548,15 @@ __device__ void _ModMult(uint64_t *r, uint64_t *a, uint64_t *b) {
   UADDC(r[1], r512[1], ah);
   UADDC(r[2], r512[2], 0ULL);
   UADD(r[3], r512[3], 0ULL);
-
 }
 
-
-
-
 __device__ void _ModMult(uint64_t *r, uint64_t *a) {
-
   uint64_t r512[8];
   uint64_t t[NBBLOCK];
   uint64_t ah, al;
-  r512[5] = 0;
-  r512[6] = 0;
-  r512[7] = 0;
 
-  // 256*256 multiplier
+  r512[5] = r512[6] = r512[7] = 0;
+
   UMult(r512, a, r[0]);
   UMult(t, a, r[1]);
   UADDO1(r512[1], t[0]);
@@ -665,14 +577,12 @@ __device__ void _ModMult(uint64_t *r, uint64_t *a) {
   UADDC1(r512[6], t[3]);
   UADD1(r512[7], t[4]);
 
-  // Reduce from 512 to 320
   UMultSpecial(t, (r512 + 4));
   UADDO1(r512[0], t[0]);
   UADDC1(r512[1], t[1]);
   UADDC1(r512[2], t[2]);
   UADDC1(r512[3], t[3]);
 
-  // Reduce from 320 to 256
   UADD1(t[4], 0ULL);
   UMULLO(al, t[4], 0x1000003D1ULL);
   UMULHI(ah, t[4], 0x1000003D1ULL);
@@ -680,93 +590,90 @@ __device__ void _ModMult(uint64_t *r, uint64_t *a) {
   UADDC(r[1], r512[1], ah);
   UADDC(r[2], r512[2], 0ULL);
   UADD(r[3], r512[3], 0ULL);
-
 }
-__device__ void _ModSqr(uint64_t *rp,const uint64_t *up) {
 
+__device__ void _ModSqr(uint64_t *rp,const uint64_t *up) {
   uint64_t r512[8];
 
 #if 1
-
   uint64_t SL,SH;
 
   {
-  uint64_t r01L,r01H;
-  uint64_t r02L,r02H;
-  uint64_t r03L,r03H;
+    uint64_t r01L,r01H;
+    uint64_t r02L,r02H;
+    uint64_t r03L,r03H;
 
-  UMULLO(SL,up[0],up[0]);
-  UMULHI(SH,up[0],up[0]);
-  UMULLO(r01L,up[0],up[1]);
-  UMULHI(r01H,up[0],up[1]);
-  UMULLO(r02L,up[0],up[2]);
-  UMULHI(r02H,up[0],up[2]);
-  UMULLO(r03L,up[0],up[3]);
-  UMULHI(r03H,up[0],up[3]);
+    UMULLO(SL,up[0],up[0]);
+    UMULHI(SH,up[0],up[0]);
+    UMULLO(r01L,up[0],up[1]);
+    UMULHI(r01H,up[0],up[1]);
+    UMULLO(r02L,up[0],up[2]);
+    UMULHI(r02H,up[0],up[2]);
+    UMULLO(r03L,up[0],up[3]);
+    UMULHI(r03H,up[0],up[3]);
 
-  r512[0] = SL;
-  r512[1] = r01L;
-  r512[2] = r02L;
-  r512[3] = r03L;
+    r512[0] = SL;
+    r512[1] = r01L;
+    r512[2] = r02L;
+    r512[3] = r03L;
 
-  UADDO1(r512[1],SH);
-  UADDC1(r512[2],r01H);
-  UADDC1(r512[3],r02H);
-  UADD(r512[4],r03H,0ULL);
+    UADDO1(r512[1],SH);
+    UADDC1(r512[2],r01H);
+    UADDC1(r512[3],r02H);
+    UADD(r512[4],r03H,0ULL);
 
-  uint64_t r12L,r12H;
-  uint64_t r13L,r13H;
+    uint64_t r12L,r12H;
+    uint64_t r13L,r13H;
 
-  UMULLO(SL,up[1],up[1]);
-  UMULHI(SH,up[1],up[1]);
-  UMULLO(r12L,up[1],up[2]);
-  UMULHI(r12H,up[1],up[2]);
-  UMULLO(r13L,up[1],up[3]);
-  UMULHI(r13H,up[1],up[3]);
+    UMULLO(SL,up[1],up[1]);
+    UMULHI(SH,up[1],up[1]);
+    UMULLO(r12L,up[1],up[2]);
+    UMULHI(r12H,up[1],up[2]);
+    UMULLO(r13L,up[1],up[3]);
+    UMULHI(r13H,up[1],up[3]);
 
-  UADDO1(r512[1],r01L);
-  UADDC1(r512[2],SL);
-  UADDC1(r512[3],r12L);
-  UADDC1(r512[4],r13L);
-  UADD(r512[5],r13H,0ULL);
+    UADDO1(r512[1],r01L);
+    UADDC1(r512[2],SL);
+    UADDC1(r512[3],r12L);
+    UADDC1(r512[4],r13L);
+    UADD(r512[5],r13H,0ULL);
 
-  UADDO1(r512[2],r01H);
-  UADDC1(r512[3],SH);
-  UADDC1(r512[4],r12H);
-  UADD1(r512[5],0ULL);
+    UADDO1(r512[2],r01H);
+    UADDC1(r512[3],SH);
+    UADDC1(r512[4],r12H);
+    UADD1(r512[5],0ULL);
 
-  uint64_t r23L,r23H;
+    uint64_t r23L,r23H;
 
-  UMULLO(SL,up[2],up[2]);
-  UMULHI(SH,up[2],up[2]);
-  UMULLO(r23L,up[2],up[3]);
-  UMULHI(r23H,up[2],up[3]);
+    UMULLO(SL,up[2],up[2]);
+    UMULHI(SH,up[2],up[2]);
+    UMULLO(r23L,up[2],up[3]);
+    UMULHI(r23H,up[2],up[3]);
 
-  UADDO1(r512[2],r02L);
-  UADDC1(r512[3],r12L);
-  UADDC1(r512[4],SL);
-  UADDC1(r512[5],r23L);
-  UADD(r512[6],r23H,0ULL);
+    UADDO1(r512[2],r02L);
+    UADDC1(r512[3],r12L);
+    UADDC1(r512[4],SL);
+    UADDC1(r512[5],r23L);
+    UADD(r512[6],r23H,0ULL);
 
-  UADDO1(r512[3],r02H);
-  UADDC1(r512[4],r12H);
-  UADDC1(r512[5],SH);
-  UADD1(r512[6],0ULL);
+    UADDO1(r512[3],r02H);
+    UADDC1(r512[4],r12H);
+    UADDC1(r512[5],SH);
+    UADD1(r512[6],0ULL);
 
+    UMULLO(SL,up[3],up[3]);
+    UMULHI(SH,up[3],up[3]);
 
-  UMULLO(SL,up[3],up[3]);
-  UMULHI(SH,up[3],up[3]);
+    UADDO1(r512[3],r03L);
+    UADDC1(r512[4],r13L);
+    UADDC1(r512[5],r23L);
+    UADDC1(r512[6],SL);
+    UADD(r512[7],SH,0ULL);
 
-  UADDO1(r512[3],r03L);
-  UADDC1(r512[4],r13L);
-  UADDC1(r512[5],r23L);
-  UADDC1(r512[6],SL);
-  UADD(r512[7],SH,0ULL);
-
-  UADDO1(r512[4],r03H);
-  UADDC1(r512[5],r13H);
-  UADDC1(r512[6],r23H);
-  UADD1(r512[7],0ULL);
+    UADDO1(r512[4],r03H);
+    UADDC1(r512[5],r13H);
+    UADDC1(r512[6],r23H);
+    UADD1(r512[7],0ULL);
   }
 
   uint64_t t[NBBLOCK];
@@ -784,140 +691,11 @@ __device__ void _ModSqr(uint64_t *rp,const uint64_t *up) {
   UADDC(rp[1],r512[1],SH);
   UADDC(rp[2],r512[2],0ULL);
   UADD(rp[3],r512[3],0ULL);
-
 #endif
 
 #if 0
 
-  uint64_t r0;
-  uint64_t r1;
-  uint64_t r3;
-  uint64_t r4;
-
-  uint64_t t1;
-  uint64_t t2;
-
-  uint64_t u10,u11;
-
-  UMULLO(r512[0],up[0],up[0]);
-  UMULHI(r1,up[0],up[0]);
-
-  UMULLO(r3,up[0],up[1]);
-  UMULHI(r4,up[0],up[1]);
-  UADDO1(r3,r3);
-  UADDC1(r4,r4);
-  UADD(t1,0x0ULL,0x0ULL);
-  UADDO1(r3,r1);
-  UADDC1(r4,0x0ULL);
-  UADD1(t1,0x0ULL);
-  r512[1] = r3;
-
-  UMULLO(r0,up[0],up[2]);
-  UMULHI(r1,up[0],up[2]);
-  UADDO1(r0,r0);
-  UADDC1(r1,r1);
-  UADD(t2,0x0ULL,0x0ULL);
-  UMULLO(u10,up[1],up[1]);
-  UMULHI(u11,up[1],up[1]);
-  UADDO1(r0,u10);
-  UADDC1(r1,u11);
-  UADD1(t2,0x0ULL);
-  UADDO1(r0,r4);
-  UADDC1(r1,t1);
-  UADD1(t2,0x0ULL);
-
-  r512[2] = r0;
-
-  UMULLO(r3,up[0],up[3]);
-  UMULHI(r4,up[0],up[3]);
-  UMULLO(u10,up[1],up[2]);
-  UMULHI(u11,up[1],up[2]);
-  UADDO1(r3,u10);
-  UADDC1(r4,u11);
-  UADD(t1,0x0ULL,0x0ULL);
-  t1 += t1;
-  UADDO1(r3,r3);
-  UADDC1(r4,r4);
-  UADD1(t1,0x0ULL);
-  UADDO1(r3,r1);
-  UADDC1(r4,t2);
-  UADD1(t1,0x0ULL);
-
-  r512[3] = r3;
-
-  UMULLO(r0,up[1],up[3]);
-  UMULHI(r1,up[1],up[3]);
-  UADDO1(r0,r0);
-  UADDC1(r1,r1);
-  UADD(t2,0x0ULL,0x0ULL);
-  UMULLO(u10,up[2],up[2]);
-  UMULHI(u11,up[2],up[2]);
-  UADDO1(r0,u10);
-  UADDC1(r1,u11);
-  UADD1(t2,0x0ULL);
-  UADDO1(r0,r4);
-  UADDC1(r1,t1);
-  UADD1(t2,0x0ULL);
-
-  r512[4] = r0;
-
-  UMULLO(r3,up[2],up[3]);
-  UMULHI(r4,up[2],up[3]);
-  UADDO1(r3,r3);
-  UADDC1(r4,r4);
-  UADD(t1,0x0ULL,0x0ULL);
-  UADDO1(r3,r1);
-  UADDC1(r4,t2);
-  UADD1(t1,0x0ULL);
-
-  r512[5] = r3;
-
-  UMULLO(r0,up[3],up[3]);
-  UMULHI(r1,up[3],up[3]);
-  UADDO1(r0,r4);
-  UADD1(r1,t1);
-  r512[6] = r0;
-
-  r512[7] = r1;
-
-  uint64_t z1,z2,z3,z4,z5,z6,z7,z8;
-
-  UMULLO(z3,r512[5],0x1000003d1ULL);
-  UMULHI(z4,r512[5],0x1000003d1ULL);
-  UMULLO(z5,r512[6],0x1000003d1ULL);
-  UMULHI(z6,r512[6],0x1000003d1ULL);
-  UMULLO(z7,r512[7],0x1000003d1ULL);
-  UMULHI(z8,r512[7],0x1000003d1ULL);
-  UMULLO(z1,r512[4],0x1000003d1ULL);
-  UMULHI(z2,r512[4],0x1000003d1ULL);
-  UADDO1(z1,r512[0]);
-  UADD1(z2,0x0ULL);
-
-
-  UADDO1(z2,r512[1]);
-  UADDC1(z4,r512[2]);
-  UADDC1(z6,r512[3]);
-  UADD1(z8,0x0ULL);
-
-  UADDO1(z3,z2);
-  UADDC1(z5,z4);
-  UADDC1(z7,z6);
-  UADD1(z8,0x0ULL);
-
-  UMULLO(u10,z8,0x1000003d1ULL);
-  UMULHI(u11,z8,0x1000003d1ULL);
-  UADDO1(z1,u10);
-  UADDC1(z3,u11);
-  UADDC1(z5,0x0ULL);
-  UADD1(z7,0x0ULL);
-
-  rp[0] = z1;
-  rp[1] = z3;
-  rp[2] = z5;
-  rp[3] = z7;
-
 #endif
-
 }
 
 __device__ void fieldInv(const uint64_t in[4], uint64_t out[4]) {
@@ -945,13 +723,13 @@ __device__ uint64_t addWithCarry(uint64_t a, uint64_t b, uint64_t carry_in, uint
     return sum;
 }
 
-// --- Secp256k1 block (point mult, doubling etc with a few helpers) -----------------------------
+// --- Secp256k1 constants ----------------------------------------------------
 
 static __device__ const uint64_t SECP_P_LE[4] = {
     0xFFFFFFFEFFFFFC2FULL, 
     0xFFFFFFFFFFFFFFFFULL,
     0xFFFFFFFFFFFFFFFFULL,
-    0xFFFFFFFFFFFFFFFFULL  
+    0xFFFFFFFFFFFFFFFFULL
 };
 
 static __device__ const uint64_t SECP_GX_LE[4] = {
@@ -968,90 +746,88 @@ static __device__ const uint64_t SECP_GY_LE[4] = {
 };
 
 __device__ __forceinline__ void fieldCopy(const uint64_t a[4], uint64_t out[4]) {
-    out[0] = a[0];
-    out[1] = a[1];
-    out[2] = a[2];
-    out[3] = a[3];
+    out[0] = a[0]; out[1] = a[1]; out[2] = a[2]; out[3] = a[3];
 }
 
 __device__ __forceinline__ bool fieldIsZero(const uint64_t a[4]) {
     return ( (a[0] | a[1] | a[2] | a[3]) == 0ULL );
 }
 
+// ====== fieldAdd/fieldSub compatible with Windows ======
+__device__ __forceinline__ bool geq_p256(const uint64_t x[4]) {
+    if (x[3] != SECP_P_LE[3]) return x[3] > SECP_P_LE[3];
+    if (x[2] != SECP_P_LE[2]) return x[2] > SECP_P_LE[2];
+    if (x[1] != SECP_P_LE[1]) return x[1] > SECP_P_LE[1];
+    return x[0] >= SECP_P_LE[0];
+}
+__device__ __forceinline__ void add_u64_carry(uint64_t a, uint64_t b, uint64_t &sum, uint64_t &carry) {
+    sum = a + b;
+    carry = (sum < a) ? 1u : 0u;
+}
+__device__ __forceinline__ void add_u64_carry_in(uint64_t a, uint64_t b, uint64_t cin,
+                                                 uint64_t &sum, uint64_t &cout) {
+    uint64_t s = a + b;
+    uint64_t c0 = (s < a) ? 1u : 0u;
+    uint64_t s2 = s + cin;
+    uint64_t c1 = (s2 < s) ? 1u : 0u;
+    sum = s2;
+    cout = (c0 | c1);
+}
+__device__ __forceinline__ void sub_u64_borrow(uint64_t a, uint64_t b, uint64_t &diff, uint64_t &borrow) {
+    diff = a - b;
+    borrow = (a < b) ? 1u : 0u;
+}
+__device__ __forceinline__ void sub_u64_borrow_in(uint64_t a, uint64_t b, uint64_t bin,
+                                                   uint64_t &diff, uint64_t &bout) {
+    uint64_t d = a - b;
+    uint64_t b0 = (a < b) ? 1u : 0u;
+    uint64_t d2 = d - bin;
+    uint64_t b1 = (d < bin) ? 1u : 0u;
+    diff = d2;
+    bout = (b0 | b1);
+}
+
 __device__ void fieldAdd(const uint64_t a[4], const uint64_t b[4], uint64_t out[4]) {
-    __uint128_t t = 0;
-    uint64_t c = 0;
+    // out = a + b (mod p)
+    uint64_t c = 0, s0, s1, s2, s3;
 
-    t = (__uint128_t)a[0] + b[0];
-    out[0] = (uint64_t)t;
-    c = (uint64_t)(t >> 64);
+    add_u64_carry(a[0], b[0], s0, c);
+    add_u64_carry_in(a[1], b[1], c, s1, c);
+    add_u64_carry_in(a[2], b[2], c, s2, c);
+    add_u64_carry_in(a[3], b[3], c, s3, c);
 
-    t = (__uint128_t)a[1] + b[1] + c;
-    out[1] = (uint64_t)t;
-    c = (uint64_t)(t >> 64);
+    out[0] = s0; out[1] = s1; out[2] = s2; out[3] = s3;
 
-    t = (__uint128_t)a[2] + b[2] + c;
-    out[2] = (uint64_t)t;
-    c = (uint64_t)(t >> 64);
-
-    t = (__uint128_t)a[3] + b[3] + c;
-    out[3] = (uint64_t)t;
-    c = (uint64_t)(t >> 64); 
-
-    if (c || (out[3] > SECP_P_LE[3]) || 
-        (out[3] == SECP_P_LE[3] && out[2] > SECP_P_LE[2]) || 
-        (out[3] == SECP_P_LE[3] && out[2] == SECP_P_LE[2] && out[1] > SECP_P_LE[1]) || 
-        (out[3] == SECP_P_LE[3] && out[2] == SECP_P_LE[2] && out[1] == SECP_P_LE[1] && out[0] >= SECP_P_LE[0])) {
-
-        __uint128_t tb;
-        uint64_t borrow = 0;
-        tb = (__uint128_t)out[0] - SECP_P_LE[0];
-        out[0] = (uint64_t)tb;
-        borrow = (tb > 0xFFFFFFFFFFFFFFFFULL) ? 1 : 0;
-
-        tb = (__uint128_t)out[1] - SECP_P_LE[1] - borrow;
-        out[1] = (uint64_t)tb;
-        borrow = (tb > 0xFFFFFFFFFFFFFFFFULL) ? 1 : 0;
-
-        tb = (__uint128_t)out[2] - SECP_P_LE[2] - borrow;
-        out[2] = (uint64_t)tb;
-        borrow = (tb > 0xFFFFFFFFFFFFFFFFULL) ? 1 : 0;
-
-        tb = (__uint128_t)out[3] - SECP_P_LE[3] - borrow;
-        out[3] = (uint64_t)tb;
+    // If overflow or result >= p, we subtract p
+    if (c || geq_p256(out)) {
+        uint64_t d0,d1,d2,d3, br=0;
+        sub_u64_borrow(out[0], SECP_P_LE[0], d0, br);
+        sub_u64_borrow_in(out[1], SECP_P_LE[1], br, d1, br);
+        sub_u64_borrow_in(out[2], SECP_P_LE[2], br, d2, br);
+        sub_u64_borrow_in(out[3], SECP_P_LE[3], br, d3, br);
+        out[0]=d0; out[1]=d1; out[2]=d2; out[3]=d3;
     }
 }
 
 __device__ void fieldSub(const uint64_t a[4], const uint64_t b[4], uint64_t out[4]) {
-    __int128_t t;
-    uint64_t borrow = 0;
+    // out = a - b (mod p)
+    uint64_t br=0, d0,d1,d2,d3;
 
-    t = (__int128_t)a[0] - b[0];
-    out[0] = (uint64_t)t; borrow = (t < 0);
+    sub_u64_borrow(a[0], b[0], d0, br);
+    sub_u64_borrow_in(a[1], b[1], br, d1, br);
+    sub_u64_borrow_in(a[2], b[2], br, d2, br);
+    sub_u64_borrow_in(a[3], b[3], br, d3, br);
 
-    t = (__int128_t)a[1] - b[1] - borrow;
-    out[1] = (uint64_t)t; borrow = (t < 0);
+    out[0]=d0; out[1]=d1; out[2]=d2; out[3]=d3;
 
-    t = (__int128_t)a[2] - b[2] - borrow;
-    out[2] = (uint64_t)t; borrow = (t < 0);
-
-    t = (__int128_t)a[3] - b[3] - borrow;
-    out[3] = (uint64_t)t; borrow = (t < 0);
-
-    if (borrow) {
-        __uint128_t tu;
-        uint64_t carry = 0;
-        tu = (__uint128_t)out[0] + SECP_P_LE[0];
-        out[0] = (uint64_t)tu; carry = (uint64_t)(tu >> 64);
-
-        tu = (__uint128_t)out[1] + SECP_P_LE[1] + carry;
-        out[1] = (uint64_t)tu; carry = (uint64_t)(tu >> 64);
-
-        tu = (__uint128_t)out[2] + SECP_P_LE[2] + carry;
-        out[2] = (uint64_t)tu; carry = (uint64_t)(tu >> 64);
-
-        tu = (__uint128_t)out[3] + SECP_P_LE[3] + carry;
-        out[3] = (uint64_t)tu;
+    // If final borrowing, we add p
+    if (br) {
+        uint64_t c=0, s0,s1,s2,s3;
+        add_u64_carry(out[0], SECP_P_LE[0], s0, c);
+        add_u64_carry_in(out[1], SECP_P_LE[1], c, s1, c);
+        add_u64_carry_in(out[2], SECP_P_LE[2], c, s2, c);
+        add_u64_carry_in(out[3], SECP_P_LE[3], c, s3, c);
+        out[0]=s0; out[1]=s1; out[2]=s2; out[3]=s3;
     }
 }
 
@@ -1070,7 +846,7 @@ __device__ __forceinline__ void fieldSqr(const uint64_t a[4], uint64_t out[4]) {
     _ModSqr(out, a);
 }
 
-// --- Simple EC affine coordinates (we don't need fast implementation of point mult) ----------------
+// --- EC affine --------------------------------------------------
 
 struct ECPointA {
     uint64_t X[4];
@@ -1084,7 +860,7 @@ __device__ __forceinline__ void pointSetInfinity(ECPointA &P) {
     P.Y[0]=P.Y[1]=P.Y[2]=P.Y[3]=0ULL;
 }
 __device__ __forceinline__ void pointSetG(ECPointA &P) {
-    pointSetInfinity(P); 
+    pointSetInfinity(P);
     P.infinity = false;
     P.X[0] = SECP_GX_LE[0];
     P.X[1] = SECP_GX_LE[1];
@@ -1095,6 +871,7 @@ __device__ __forceinline__ void pointSetG(ECPointA &P) {
     P.Y[2] = SECP_GY_LE[2];
     P.Y[3] = SECP_GY_LE[3];
 }
+
 __device__ void pointDoubleAffine(const ECPointA &P, ECPointA &R) {
     if (P.infinity) { pointSetInfinity(R); return; }
 
@@ -1132,34 +909,25 @@ __device__ void pointAddAffine(const ECPointA &P, const ECPointA &Q, ECPointA &R
     bool sameX = (P.X[0]==Q.X[0] && P.X[1]==Q.X[1] && P.X[2]==Q.X[2] && P.X[3]==Q.X[3]);
     bool sameY = (P.Y[0]==Q.Y[0] && P.Y[1]==Q.Y[1] && P.Y[2]==Q.Y[2] && P.Y[3]==Q.Y[3]);
 
-    if (sameX && sameY) {
-        pointDoubleAffine(P, R);
-        return;
-    }
-
-    if (sameX && !sameY) {
-        pointSetInfinity(R);
-        return;
-    }
+    if (sameX && sameY) { pointDoubleAffine(P, R); return; }
+    if (sameX && !sameY) { pointSetInfinity(R); return; }
 
     uint64_t dx[4], dy[4], invdx[4], lambda[4], lambda2[4];
     uint64_t tmp1[4], prod[4], newX[4], newY[4];
 
-    fieldSub(Q.X, P.X, dx);     // dx = x2 - x1
-    fieldSub(Q.Y, P.Y, dy);     // dy = y2 - y1
+    fieldSub(Q.X, P.X, dx);
+    fieldSub(Q.Y, P.Y, dy);
 
-    fieldInv(dx, invdx);        // invdx = 1/dx
-    fieldMul(dy, invdx, lambda);// lambda = dy * invdx = (y2 - y1) / (x2 - x1)
+    fieldInv(dx, invdx);
+    fieldMul(dy, invdx, lambda);
 
-    // x3 = lambda^2 - x1 - x2
     fieldSqr(lambda, lambda2);
-    fieldSub(lambda2, P.X, tmp1);   // tmp1 = lambda^2 - x1
-    fieldSub(tmp1, Q.X, newX);      // newX = lambda^2 - x1 - x2
+    fieldSub(lambda2, P.X, tmp1);
+    fieldSub(tmp1, Q.X, newX);
 
-    // y3 = lambda*(x1 - x3) - y1
-    fieldSub(P.X, newX, tmp1);      // tmp1 = x1 - x3
-    fieldMul(lambda, tmp1, prod);   // prod = lambda * (x1 - x3)
-    fieldSub(prod, P.Y, newY);      // newY = prod - y1
+    fieldSub(P.X, newX, tmp1);
+    fieldMul(lambda, tmp1, prod);
+    fieldSub(prod, P.Y, newY);
 
     fieldCopy(newX, R.X);
     fieldCopy(newY, R.Y);
@@ -1180,33 +948,22 @@ __device__ void scalarMulBaseAffine(const uint64_t scalar_le[4], uint64_t outX[4
     }
 
     if (msb == -1) {
-        // scalar == 0 -> infinity
         outX[0]=outX[1]=outX[2]=outX[3]=0ULL;
         outY[0]=outY[1]=outY[2]=outY[3]=0ULL;
         return;
     }
 
     for (int bi = msb; bi >= 0; --bi) {
-        // R = 2*R
         if (!R.infinity) {
-            ECPointA tmpD;
-            pointDoubleAffine(R, tmpD);
-            R = tmpD;
+            ECPointA tmpD; pointDoubleAffine(R, tmpD); R = tmpD;
         }
-        // if bit == 1, R = R + G
         int limb = bi >> 6;
         int shift = bi & 63;
         uint64_t bit = (scalar_le[limb] >> shift) & 1ULL;
         if (bit) {
-            ECPointA Gp;
-            pointSetG(Gp);
-            if (R.infinity) {
-                R = Gp;
-            } else {
-                ECPointA tmpA;
-                pointAddAffine(R, Gp, tmpA);
-                R = tmpA;
-            }
+            ECPointA Gp; pointSetG(Gp);
+            if (R.infinity) { R = Gp; }
+            else { ECPointA tmpA; pointAddAffine(R, Gp, tmpA); R = tmpA; }
         }
     }
 
@@ -1229,5 +986,3 @@ __global__ void scalarMulKernelBase(const uint64_t* scalars_in, uint64_t* outX, 
 
     scalarMulBaseAffine(scalar, outx, outy);
 }
-
-
