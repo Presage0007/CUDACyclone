@@ -1,7 +1,12 @@
 // Build:
-// RTX 30xx : nvcc -O3 --use_fast_math -std=c++17 -arch=sm_86 -Xptxas=-O3,-dlcm=ca -maxrregcount=64 -Xcompiler -pthread CUDACyclone.cu -o CUDACyclone
-// RTX 50xx : nvcc -O3 --use_fast_math -std=c++17 -arch=sm_90 -Xptxas=-O3,-dlcm=ca -maxrregcount=64 -Xcompiler -pthread CUDACyclone.cu -o CUDACyclone
-// (or use make)
+// Linux:
+//   RTX 30xx : nvcc -O3 --use_fast_math -std=c++17 -arch=sm_86 -Xptxas=-O3,-dlcm=ca -maxrregcount=64 -Xcompiler -pthread CUDACyclone.cu -o CUDACyclone
+//   RTX 50xx : nvcc -O3 --use_fast_math -std=c++17 -arch=sm_90 -Xptxas=-O3,-dlcm=ca -maxrregcount=64 -Xcompiler -pthread CUDACyclone.cu -o CUDACyclone
+// Windows (MSVC host):
+//   RTX 30xx : nvcc -O3 --use_fast_math -std=c++17 -arch=sm_86 -Xptxas=-O3,-dlcm=ca -maxrregcount=64 CUDACyclone.cu -o CUDACyclone.exe
+//   RTX 50xx : nvcc -O3 --use_fast_math -std=c++17 -arch=sm_90 -Xptxas=-O3,-dlcm=ca -maxrregcount=64 CUDACyclone.cu -o CUDACyclone.exe
+// (or use CMake/Makefiles; on Windows do NOT pass -pthread)
+// Note: you may pass -DFLUSH_THRESHOLD=16384 (or 8192/32768) at compile time to tune flush cadence.
 
 // =================== includes ===================
 #include <cuda_runtime.h>
@@ -18,6 +23,10 @@
 #include <chrono>
 #include <cmath>
 #include <vector>
+
+#if defined(_MSC_VER) && !defined(__CUDA_ARCH__)
+#  include <intrin.h> // for _umul128 on MSVC host
+#endif
 
 #include "CUDAMath.h"
 #include "sha256.h"
@@ -76,6 +85,48 @@ static inline uint64_t mix64(uint64_t x){
     return x ^ (x >> 31);
 }
 
+// ---------- Windows-safe 64×64 helpers on HOST (no __int128 needed) ----------
+static inline void mul_64_64_to_128_host(uint64_t a, uint64_t b, uint64_t& lo, uint64_t& hi) {
+#if defined(_MSC_VER) && !defined(__CUDA_ARCH__)
+    lo = _umul128(a, b, &hi); // MSVC intrinsic
+#elif defined(__SIZEOF_INT128__) && !defined(__CUDA_ARCH__)
+    unsigned __int128 p = (unsigned __int128)a * (unsigned __int128)b;
+    lo = (uint64_t)p;
+    hi = (uint64_t)(p >> 64);
+#else
+    // 32-bit splitting (portable)
+    uint64_t a0 = (uint32_t)a, a1 = a >> 32;
+    uint64_t b0 = (uint32_t)b, b1 = b >> 32;
+    uint64_t p0 = a0 * b0;
+    uint64_t p1 = a0 * b1;
+    uint64_t p2 = a1 * b0;
+    uint64_t p3 = a1 * b1;
+    uint64_t mid = (p1 & 0xffffffffull) + (p2 & 0xffffffffull) + (p0 >> 32);
+    lo = (p0 & 0xffffffffull) | (mid << 32);
+    hi = p3 + (p1 >> 32) + (p2 >> 32) + (mid >> 32);
+#endif
+}
+
+// (a*b) % mod without 128-bit intermediates. Works for any 64-bit mod.
+static inline uint64_t mulmod_u64(uint64_t a, uint64_t b, uint64_t mod) {
+    if (!mod) return 0ull;
+    a %= mod;
+    b %= mod;
+    uint64_t res = 0;
+    while (b) {
+        if (b & 1ull) {
+            // res = (res + a) % mod without overflow
+            if (res >= mod - a) res = res - (mod - a);
+            else res += a;
+        }
+        // a = (2*a) % mod without overflow
+        if (a >= mod - a) a = a - (mod - a);
+        else a += a;
+        b >>= 1ull;
+    }
+    return res;
+}
+
 // ================= device helpers =================
 __device__ __forceinline__ int load_found_flag_relaxed(const int* p) {
     return *((const volatile int*)p);
@@ -91,8 +142,7 @@ __device__ __forceinline__ bool warp_found_ready(const int* __restrict__ d_found
 }
 
 // ---- param tuning ----
-// IMPORTANT: Batch cap at 32 (half-batch=16 => ~256 B/thread for subp)
-// You can recompile with -DMAX_BATCH_SIZE=64 if your GPU supports it (test!).
+// NOTE: batch must be even and a power of two.
 #ifndef MAX_BATCH_SIZE
 #define MAX_BATCH_SIZE 512
 #endif
@@ -100,9 +150,58 @@ __device__ __forceinline__ bool warp_found_ready(const int* __restrict__ d_found
 #define WARP_SIZE 32
 #endif
 
-// copies k*G en constant
+// Precomputed k*G in constant memory
 __constant__ uint64_t c_pGx[MAX_BATCH_SIZE * 4];
 __constant__ uint64_t c_pGy[MAX_BATCH_SIZE * 4];
+
+// ============== Warp batched inverse (1 inverse per warp) ==============
+__device__ __forceinline__ void warp_batch_inverse_256(
+    uint64_t* __restrict__ s_warpQ,
+    uint64_t* __restrict__ s_warpTmp,
+    unsigned warp_id,
+    unsigned lane_id)
+{
+    const unsigned warp_base = warp_id * WARP_SIZE * 4;
+
+    if (lane_id == 0) {
+        uint64_t part[5] = {1ULL, 0ULL, 0ULL, 0ULL, 0ULL};
+
+        // Prefixes (store prefix BEFORE multiplying Q_t)
+        for (int t = 0; t < (int)WARP_SIZE; ++t) {
+#pragma unroll
+            for (int k = 0; k < 4; ++k) s_warpTmp[warp_base + t*4 + k] = part[k];
+            uint64_t qtmp[5];
+#pragma unroll
+            for (int k = 0; k < 4; ++k) qtmp[k] = s_warpQ[warp_base + t*4 + k];
+            qtmp[4] = 0ULL;
+            _ModMult(part, qtmp);
+        }
+
+        _ModInv(part); // inverse of total product
+
+        uint64_t inv_total[5];
+#pragma unroll
+        for (int k = 0; k < 5; ++k) inv_total[k] = part[k];
+
+        for (int t = (int)WARP_SIZE - 1; t >= 0; --t) {
+            uint64_t pref[5];
+#pragma unroll
+            for (int k = 0; k < 4; ++k) pref[k] = s_warpTmp[warp_base + t*4 + k];
+            pref[4] = 0ULL;
+            _ModMult(pref, inv_total);
+#pragma unroll
+            for (int k = 0; k < 4; ++k) s_warpTmp[warp_base + t*4 + k] = pref[k];
+
+            uint64_t qtmp2[5];
+#pragma unroll
+            for (int k = 0; k < 4; ++k) qtmp2[k] = s_warpQ[warp_base + t*4 + k];
+            qtmp2[4] = 0ULL;
+            _ModMult(inv_total, qtmp2);
+        }
+    }
+
+    __syncwarp();
+}
 
 // Kernel
 __launch_bounds__(256, 2)
@@ -112,7 +211,7 @@ __global__ void kernel_point_add_and_check(
     uint64_t* __restrict__ Rx,
     uint64_t* __restrict__ Ry,
     const uint64_t* __restrict__ start_scalars,
-    const uint64_t* __restrict__ counts256,     // rem 256 bits/fil
+    const uint64_t* __restrict__ counts256,     // 256-bit count per thread
     uint64_t threadsTotal,
     uint32_t batch_size,
     int* __restrict__ d_found_flag,
@@ -125,11 +224,14 @@ __global__ void kernel_point_add_and_check(
     if (batch > MAX_BATCH_SIZE) batch = MAX_BATCH_SIZE;
     const int half  = batch >> 1;
 
+    // Shared memory layout
     extern __shared__ uint64_t s_mem[];
-    uint64_t* s_pGx = s_mem;
-    uint64_t* s_pGy = s_pGx + (size_t)batch * 4;
+    uint64_t* s_pGx     = s_mem;
+    uint64_t* s_pGy     = s_pGx + (size_t)batch * 4;
+    uint64_t* s_warpQ   = s_pGy + (size_t)batch * 4;
+    uint64_t* s_warpTmp = s_warpQ + (size_t)blockDim.x * 4;
 
-    // load pG in shared
+    // Load k*G from constant memory
     for (int idx = threadIdx.x; idx < batch*4; idx += blockDim.x) {
         s_pGx[idx] = c_pGx[idx];
         s_pGy[idx] = c_pGy[idx];
@@ -139,23 +241,34 @@ __global__ void kernel_point_add_and_check(
     const uint64_t gid = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
     if (gid >= threadsTotal) return;
 
-    const unsigned lane      = (unsigned)(threadIdx.x & (WARP_SIZE - 1));
+    const unsigned lane_id   = (unsigned)(threadIdx.x & (WARP_SIZE - 1));
+    const unsigned warp_id   = (unsigned)(threadIdx.x >> 5);
     const unsigned full_mask = 0xFFFFFFFFu;
-    if (warp_found_ready(d_found_flag, full_mask, lane)) return;
+
+    if (warp_found_ready(d_found_flag, full_mask, lane_id)) return;
 
     const uint32_t target_prefix = c_target_prefix;
 
-    // Hash counter for infrequent atomic reductions
-    unsigned int local_hashes = 0;
-    #define FLUSH_THRESHOLD 65536u
-    #define WARP_FLUSH_HASHES() do { \
-        unsigned long long v = warp_reduce_add_ull((unsigned long long)local_hashes); \
-        if (lane == 0 && v) atomicAdd(hashes_accum, v); \
-        local_hashes = 0; \
-    } while (0)
-    #define MAYBE_WARP_FLUSH() do { if ((local_hashes & (FLUSH_THRESHOLD - 1u)) == 0u) WARP_FLUSH_HASHES(); } while (0)
+#ifndef FLUSH_THRESHOLD
+#define FLUSH_THRESHOLD 16384u   // stable default like the original
+#endif
 
-    // Load state
+// Stable, uniform flush like the original code:
+#define WARP_FLUSH_HASHES() \
+do { \
+    unsigned long long v = warp_reduce_add_ull((unsigned long long)local_hashes); \
+    if (lane_id == 0 && v) atomicAdd(hashes_accum, v); \
+    local_hashes = 0; \
+} while (0)
+
+#define MAYBE_WARP_FLUSH() \
+do { \
+    if ((local_hashes & (FLUSH_THRESHOLD - 1u)) == 0u) WARP_FLUSH_HASHES(); \
+} while (0)
+
+    unsigned int local_hashes = 0;
+
+    // Load per-thread state
     uint64_t x1[4], y1[4], base_scalar[4];
 #pragma unroll
     for (int i = 0; i < 4; ++i) {
@@ -171,10 +284,11 @@ __global__ void kernel_point_add_and_check(
     if ((rem[0] | rem[1] | rem[2] | rem[3]) == 0ull) {
 #pragma unroll
         for (int i = 0; i < 4; ++i) { Rx[gid*4+i] = x1[i]; Ry[gid*4+i] = y1[i]; }
+        __syncwarp(full_mask);
         WARP_FLUSH_HASHES(); return;
     }
 
-    // Initial hash test (starting key)
+    // First hash test (starting key)
     {
         uint8_t tmp_hash[20];
         uint8_t prefix = (uint8_t)(y1[0] & 1ULL) ? 0x03 : 0x02;
@@ -204,11 +318,11 @@ __global__ void kernel_point_add_and_check(
     }
     sub256_u64_inplace(rem, 1ull);
 
-    // Loop rem >= batch: each iteration = 1 inversion
+    // Main loop
     while (ge256_u64(rem, (uint64_t)batch)) {
-        if (warp_found_ready(d_found_flag, full_mask, lane)) { WARP_FLUSH_HASHES(); return; }
+        if (warp_found_ready(d_found_flag, full_mask, lane_id)) { __syncwarp(full_mask); WARP_FLUSH_HASHES(); return; }
 
-        // ---- Prepare products (massive spill reduction: batch ≤ MAX_BATCH_SIZE) ----
+        // Prepare products (Gx[j] - x1)
         uint64_t subp[MAX_BATCH_SIZE/2][4];
         uint64_t acc[4], tmp[4];
 
@@ -232,20 +346,32 @@ __global__ void kernel_point_add_and_check(
         for (int j = 0; j < 4; ++j) d0[j] = s_pGx[0 * 4 + j];
         ModSub256(d0, d0, x1);
 
-        // inverse = inv( ∏_{j=0..half-1} (Gx[j]-x1) )
+        // Q_pre = ∏(Gx[j]-x1)
+        uint64_t Q_pre[5];
+#pragma unroll
+        for (int j = 0; j < 4; ++j) Q_pre[j] = d0[j];
+        _ModMult(Q_pre, subp[0]);
+        Q_pre[4] = 0ULL;
+
+        // Single inverse per warp
+#pragma unroll
+        for (int k = 0; k < 4; ++k) s_warpQ[(size_t)warp_id*WARP_SIZE*4 + (size_t)lane_id*4 + k] = Q_pre[k];
+        __syncwarp(full_mask);
+
+        warp_batch_inverse_256(s_warpQ, s_warpTmp, warp_id, lane_id);
+
         uint64_t inverse[5];
 #pragma unroll
-        for (int j = 0; j < 4; ++j) inverse[j] = d0[j];
-        _ModMult(inverse, subp[0]);
+        for (int k = 0; k < 4; ++k) inverse[k] = s_warpTmp[(size_t)warp_id*WARP_SIZE*4 + (size_t)lane_id*4 + k];
         inverse[4] = 0ULL;
-        _ModInv(inverse);
 
+        // Iterate +/-Pi
         for (int i = 0; i < half; ++i) {
-            // dx = 1 / (Gx[i]-x1)
+            // dx = 1 / (Gx[i]-x1) = subp[i] * inverse(Q_pre)
             uint64_t dx[4];
             _ModMult(dx, subp[i], inverse);
 
-            // -------- P + (+Pi) --------
+            // ---- P + (+Pi) ----
             {
                 uint64_t px_i[4], py_i[4];
 #pragma unroll
@@ -283,7 +409,6 @@ __global__ void kernel_point_add_and_check(
                             for (int k=0;k<4 && carry;++k){ uint64_t old=fs[k]; fs[k]+=carry; carry=(fs[k]<old)?1:0; }
 #pragma unroll
                             for (int k=0;k<4;++k) d_found_result->scalar[k]=fs[k];
-
 #pragma unroll
                             for (int k=0;k<4;++k) d_found_result->Rx[k]=x3[k];
 
@@ -301,7 +426,7 @@ __global__ void kernel_point_add_and_check(
                 }
             }
 
-            // -------- P + (-Pi) --------
+            // ---- P + (-Pi) ----
             {
                 uint64_t pxn[4], pyn[4];
 #pragma unroll
@@ -338,7 +463,6 @@ __global__ void kernel_point_add_and_check(
                             for (int k=0;k<4 && borrow;++k){ uint64_t old=fs[k]; fs[k]=old-borrow; borrow=(old<borrow)?1:0; }
 #pragma unroll
                             for (int k=0;k<4;++k) d_found_result->scalar[k]=fs[k];
-
 #pragma unroll
                             for (int k=0;k<4;++k) d_found_result->Rx[k]=x3[k];
 
@@ -356,7 +480,7 @@ __global__ void kernel_point_add_and_check(
                 }
             }
 
-            // advance "reverse" (subproduct technique)
+            // Update inverse for next index (inverse *= (Gx[i]-x1))
 #pragma unroll
             for (int j = 0; j < 4; ++j) tmp[j] = s_pGx[(size_t)i*4 + j];
             ModSub256(tmp, tmp, x1);
@@ -395,10 +519,12 @@ __global__ void kernel_point_add_and_check(
 #pragma unroll
     for (int i = 0; i < 4; ++i) { Rx[gid*4+i]=x1[i]; Ry[gid*4+i]=y1[i]; }
 
+    __syncwarp(full_mask);
     WARP_FLUSH_HASHES();
+
     #undef MAYBE_WARP_FLUSH
     #undef WARP_FLUSH_HASHES
-    #undef FLUSH_THRESHOLD
+    // FLUSH_THRESHOLD remains defined (can be reused)
 }
 
 // ================= host =================
@@ -408,7 +534,7 @@ int main(int argc, char** argv) {
     bool grid_provided = false;
     uint32_t runtime_points_batch_size = 128;   // input value (will be clamped)
     uint32_t runtime_batches_per_sm    = 8;
-    uint32_t steps_per_launch          = 16;    // Number of lots per thread (contiguously)
+    uint32_t steps_per_launch          = 16;    // consecutive lots per thread
 
     bool use_random_global = true;
     uint64_t user_seed = 0;
@@ -488,7 +614,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Batch clamp on host side
+    // Clamp batch on host
     if (runtime_points_batch_size > MAX_BATCH_SIZE) {
         std::cerr << "[info] points_batch_size clamped from " << runtime_points_batch_size
                   << " to MAX_BATCH_SIZE=" << MAX_BATCH_SIZE << " to avoid spills.\n";
@@ -553,6 +679,7 @@ int main(int argc, char** argv) {
     if (threadsPerBlock > (int)prop.maxThreadsPerBlock) threadsPerBlock = prop.maxThreadsPerBlock;
     if (threadsPerBlock < 32) threadsPerBlock = 32;
 
+    // Device memory budget for main arrays
     const uint64_t bytesPerThread = 2 * 4 * sizeof(uint64_t);
     size_t totalGlobalMem = prop.totalGlobalMem;
     const uint64_t reserveBytes = 64ull * 1024 * 1024;
@@ -575,15 +702,15 @@ int main(int argc, char** argv) {
         NB_u64 = q_div_batch[0];
     }
 
-    // === Avoid overlapping via 'step' groups ===
+    // Avoid overlaps via 'steps'
     if (steps_per_launch == 0) { std::cerr << "Error: --steps must be > 0\n"; return EXIT_FAILURE; }
     if (NB_u64 % (uint64_t)steps_per_launch != 0ull) {
         std::cerr << "Error: (range_len / batch) must be divisible by --steps to avoid overlaps.\n";
         return EXIT_FAILURE;
     }
-    const uint64_t NG_u64 = NB_u64 / (uint64_t)steps_per_launch; // number of groups (contiguous lots)
+    const uint64_t NG_u64 = NB_u64 / (uint64_t)steps_per_launch;
 
-    // Choice threadsTotal bounded by NG (and not NB)
+    // threadsTotal bounded by NG (not NB)
     uint64_t userUpper = (uint64_t)prop.multiProcessorCount * (uint64_t)runtime_batches_per_sm * (uint64_t)threadsPerBlock;
     if (userUpper == 0ull) userUpper = UINT64_MAX;
     auto pick_threads_total = [&](uint64_t upper)->uint64_t {
@@ -607,19 +734,19 @@ int main(int argc, char** argv) {
                                 ^ ((uint64_t)prop.pciBusID << 16)
                                 ^ (uint64_t)prop.pciDeviceID;
 
-    // Affine permutation ON GROUPS (size NG)
+    // Affine permutation OVER GROUPS (size NG) – Windows-safe mulmod
     uint64_t A_g = 1, B_g = 0;
     if (use_random_global) {
         uint64_t sA = (mix64(seed) | 1ull);
-        if (sA >= NG_u64) sA = (sA % NG_u64) | 1ull;
-        while (gcd64(sA, NG_u64) != 1ull) {
-            sA += 2; if (sA >= NG_u64) sA -= (NG_u64 | 1ull); if (sA == 0) sA = 1;
+        if (NG_u64) sA = ((sA % NG_u64) | 1ull);
+        while (NG_u64 && gcd64(sA, NG_u64) != 1ull) {
+            sA += 2; if (NG_u64 && sA >= NG_u64) sA -= (NG_u64 | 1ull); if (sA == 0) sA = 1;
         }
-        A_g = sA;
+        A_g = (NG_u64 ? sA : 1ull);
         B_g = NG_u64 ? (mix64(seed ^ 0xD2B74407B1CE6E93ull) % NG_u64) : 0ull;
     }
 
-    // Constants hash160
+    // Target hash160 constants
     {
         uint32_t prefix_le = (uint32_t)target_hash160[0]
                            | ((uint32_t)target_hash160[1] << 8)
@@ -629,35 +756,35 @@ int main(int argc, char** argv) {
         cudaMemcpyToSymbol(c_target_hash160, target_hash160, 20);
     }
 
-    // --------- Buffers device ---------
+    // --------- Device buffers ---------
     uint64_t *d_start_scalars=nullptr, *d_Px=nullptr, *d_Py=nullptr, *d_Rx=nullptr, *d_Ry=nullptr, *d_counts256=nullptr;
     int *d_found_flag=nullptr;
     FoundResult *d_found_result=nullptr;
     unsigned long long *d_hashes_accum=nullptr;
     cudaMalloc(&d_start_scalars, threadsTotal * 4 * sizeof(uint64_t));
-    cudaMalloc(&d_Px, threadsTotal * 4 * sizeof(uint64_t));
-    cudaMalloc(&d_Py, threadsTotal * 4 * sizeof(uint64_t));
-    cudaMalloc(&d_Rx, threadsTotal * 4 * sizeof(uint64_t));
-    cudaMalloc(&d_Ry, threadsTotal * 4 * sizeof(uint64_t));
-    cudaMalloc(&d_counts256, threadsTotal * 4 * sizeof(uint64_t));
-    cudaMalloc(&d_found_flag, sizeof(int));
-    cudaMalloc(&d_found_result, sizeof(FoundResult));
-    cudaMalloc(&d_hashes_accum, sizeof(unsigned long long));
+    cudaMalloc(&d_Px,            threadsTotal * 4 * sizeof(uint64_t));
+    cudaMalloc(&d_Py,            threadsTotal * 4 * sizeof(uint64_t));
+    cudaMalloc(&d_Rx,            threadsTotal * 4 * sizeof(uint64_t));
+    cudaMalloc(&d_Ry,            threadsTotal * 4 * sizeof(uint64_t));
+    cudaMalloc(&d_counts256,     threadsTotal * 4 * sizeof(uint64_t));
+    cudaMalloc(&d_found_flag,    sizeof(int));
+    cudaMalloc(&d_found_result,  sizeof(FoundResult));
+    cudaMalloc(&d_hashes_accum,  sizeof(unsigned long long));
     {
         int zero = FOUND_NONE;
         unsigned long long zero64 = 0ull;
-        cudaMemcpy(d_found_flag, &zero, sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_found_flag,   &zero,   sizeof(int),                cudaMemcpyHostToDevice);
         cudaMemcpy(d_hashes_accum, &zero64, sizeof(unsigned long long), cudaMemcpyHostToDevice);
     }
 
-    // --------- Precompute k*G as a constant ---------
+    // --------- Precompute k*G into constant memory ---------
     {
         const uint32_t BATCH = runtime_points_batch_size;
         uint64_t *d_pGx=nullptr, *d_pGy=nullptr, *d_pG_scalars=nullptr;
 
-        cudaMalloc(&d_pGx, (size_t)BATCH * 4 * sizeof(uint64_t));
-        cudaMalloc(&d_pGy, (size_t)BATCH * 4 * sizeof(uint64_t));
-        cudaMalloc(&d_pG_scalars, (size_t)BATCH * 4 * sizeof(uint64_t));
+        cudaMalloc(&d_pGx,       (size_t)BATCH * 4 * sizeof(uint64_t));
+        cudaMalloc(&d_pGy,       (size_t)BATCH * 4 * sizeof(uint64_t));
+        cudaMalloc(&d_pG_scalars,(size_t)BATCH * 4 * sizeof(uint64_t));
 
         // host pinned for h_scal
         uint64_t* h_scal=nullptr;
@@ -681,7 +808,7 @@ int main(int argc, char** argv) {
         cudaFreeHost(h_scal);
     }
 
-    // --------- Streams & buffers host pinned ---------
+    // --------- Streams & pinned host buffers ---------
     cudaStream_t streamKernel; cudaStreamCreateWithFlags(&streamKernel, cudaStreamNonBlocking);
     cudaFuncSetCacheConfig(kernel_point_add_and_check, cudaFuncCachePreferShared);
 
@@ -690,68 +817,68 @@ int main(int argc, char** argv) {
     cudaHostAlloc((void**)&h_start_scalars, threadsTotal * 4 * sizeof(uint64_t), cudaHostAllocDefault);
     cudaHostAlloc((void**)&h_counts256,     threadsTotal * 4 * sizeof(uint64_t), cudaHostAllocDefault);
 
+    // ======= dynamic shared memory size =======
+    // sharedBytes = (batch*4*8)*2  [pGx,pGy]  + (threadsPerBlock*4*8)*2  [warpQ,warpTmp]
+    size_t sharedBytes = (size_t)runtime_points_batch_size * 4 * sizeof(uint64_t) * 2
+                       + (size_t)threadsPerBlock * 4 * sizeof(uint64_t) * 2;
+
+    cudaFuncSetAttribute(kernel_point_add_and_check,
+                         cudaFuncAttributeMaxDynamicSharedMemorySize,
+                         (int)sharedBytes);
+
     auto t0 = std::chrono::high_resolution_clock::now();
     auto tLast = t0;
     unsigned long long lastHashes = 0ull;
 
-    size_t sharedBytes = (size_t)runtime_points_batch_size * 4 * sizeof(uint64_t) * 2; // pGx + pGy
+    // total keys as long double for progress
+    long double total_keys_ld = ld_from_u256(range_len);
 
-    // Each thread processes "steps_per_launch" consecutive batches -> rem = steps*batch + 1
+    // Each thread processes "steps_per_launch" lots -> rem = steps*batch + 1
     const uint64_t perThreadRem0 = (uint64_t)runtime_points_batch_size * (uint64_t)steps_per_launch + 1ull;
 
-    std::cout << "======== PrePhase: GPU Information ====================\n";
+    std::cout << "======== GPU Setup =====================================\n";
     std::cout << std::left << std::setw(20) << "Device"            << " : " << prop.name << " (compute " << prop.major << "." << prop.minor << ")\n";
-    std::cout << std::left << std::setw(20) << "SM"                << " : " << prop.multiProcessorCount << "\n";
-    std::cout << std::left << std::setw(20) << "ThreadsPerBlock"   << " : " << threadsPerBlock << "\n";
-    std::cout << std::left << std::setw(20) << "Blocks"            << " : " << blocks << "\n";
-    std::cout << std::left << std::setw(20) << "Points batch size" << " : " << runtime_points_batch_size << " (cap " << MAX_BATCH_SIZE << ")\n";
+    std::cout << std::left << std::setw(20) << "SMs"               << " : " << prop.multiProcessorCount << "\n";
+    std::cout << std::left << std::setw(20) << "Threads/Block"     << " : " << threadsPerBlock << "\n";
+    std::cout << std::left << std::setw(20) << "Blocks"            << " : " << (int)(threadsTotal/threadsPerBlock) << "\n";
+    std::cout << std::left << std::setw(20) << "Point batch size"  << " : " << runtime_points_batch_size << " (cap " << MAX_BATCH_SIZE << ")\n";
     std::cout << std::left << std::setw(20) << "Steps/launch"      << " : " << steps_per_launch << "\n";
     std::cout << std::left << std::setw(20) << "Batches/SM"        << " : " << runtime_batches_per_sm << "\n";
-    
+    std::cout << std::left << std::setw(20) << "Flush threshold"   << " : " << (unsigned)FLUSH_THRESHOLD << " hashes\n";
+
     if (grid_provided) {
          std::cout << "[info] Using user-provided grid (batch=" << runtime_points_batch_size << ", batches/SM=" << runtime_batches_per_sm << ")\n";
     }
 
     size_t freeB=0,totalB=0; cudaMemGetInfo(&freeB,&totalB);
     size_t usedB = totalB - freeB;
-    std::cout << std::left << std::setw(20) << "Memory utilization"<< " : "
+    std::cout << std::left << std::setw(20) << "Memory utilization" << " : "
               << std::fixed << std::setprecision(1)
               << (totalB? (double)usedB*100.0/(double)totalB : 0.0) << "% ("
               << human_bytes((double)usedB) << " / " << human_bytes((double)totalB) << ")\n";
-    std::cout << "------------------------------------------------------- \n";
-    std::cout << std::left << std::setw(20) << "Total threads"     << " : " << threadsTotal << "\n";
-    std::cout << std::left << std::setw(20) << "Lots (NB)"         << " : " << NB_u64 << " of size " << runtime_points_batch_size << "\n";
-    std::cout << std::left << std::setw(20) << "Groups (NB/steps)" << " : " << NG_u64 << " (steps=" << steps_per_launch << ")\n";
-    std::cout << std::left << std::setw(20) << "Mapping"           << " : " << (use_random_global ? "Full-random (affine perm on groups)" : "Deterministic") << "\n\n";
+    std::cout << "--------------------------------------------------------\n";
 
-    // ======== Phase: epoch loops (on groups) ========
+    // ================= Epoch loop (groups) =================
     for (uint64_t base_g = 0; base_g < NG_u64; base_g += threadsTotal) {
         uint64_t active = threadsTotal;
         if (base_g + active > NG_u64) active = NG_u64 - base_g;
 
-        // Prepare buffers host (pinned)
+        // Prepare pinned host buffers
         for (uint64_t t = 0; t < threadsTotal; ++t) {
             if (t < active) {
-                // g = group index
                 uint64_t g = base_g + t;
-
-                // jGroup = affine permutation of groups
-                uint64_t jGroup = use_random_global
-                                  ? ( (unsigned __int128)A_g * g + B_g ) % NG_u64
-                                  : g;
-
-                // j0 = starting batch for this group = jGroup * steps
+                uint64_t jGroup = g;
+                if (use_random_global && NG_u64) {
+                    uint64_t prod_mod = mulmod_u64(A_g, g, NG_u64);
+                    jGroup = prod_mod + (B_g % NG_u64);
+                    if (jGroup >= NG_u64) jGroup -= NG_u64;
+                }
                 uint64_t j0 = jGroup * (uint64_t)steps_per_launch;
 
-                // offset in keys = j0 * batch
-#if defined(__SIZEOF_INT128__)
-                __uint128_t ofs128 = (__uint128_t)j0 * (uint64_t)runtime_points_batch_size;
-                uint64_t ofs[4] = { (uint64_t)ofs128, (uint64_t)(ofs128 >> 64), 0ull, 0ull };
-#else
-                uint64_t lo = (uint64_t)j0 * (uint64_t)runtime_points_batch_size;
-                uint64_t hi = __umul64hi((uint64_t)j0, (uint64_t)runtime_points_batch_size);
+                uint64_t lo=0, hi=0;
+                mul_64_64_to_128_host(j0, (uint64_t)runtime_points_batch_size, lo, hi);
                 uint64_t ofs[4] = { lo, hi, 0ull, 0ull };
-#endif
+
                 uint64_t startj[4]; add256(range_start, ofs, startj);
 
                 h_start_scalars[t*4+0] = startj[0];
@@ -778,7 +905,7 @@ int main(int argc, char** argv) {
         int blocks_scal = (int)((threadsTotal + threadsPerBlock - 1) / threadsPerBlock);
         scalarMulKernelBase<<<blocks_scal, threadsPerBlock, 0, streamKernel>>>(d_start_scalars, d_Px, d_Py, (int)threadsTotal);
 
-        // Main Kernel
+        // Main kernel
         kernel_point_add_and_check<<<(int)(threadsTotal/threadsPerBlock), threadsPerBlock, sharedBytes, streamKernel>>>(
             d_Px, d_Py, d_Rx, d_Ry,
             d_start_scalars,
@@ -789,7 +916,7 @@ int main(int argc, char** argv) {
             d_hashes_accum
         );
 
-        // Display loop / stop
+        // Display/stop loop
         bool this_epoch_done = false;
         while (!this_epoch_done) {
             auto now = std::chrono::high_resolution_clock::now();
@@ -797,11 +924,11 @@ int main(int argc, char** argv) {
             if (dt >= 1.0) {
                 unsigned long long h_hashes = 0ull;
                 cudaMemcpy(&h_hashes, d_hashes_accum, sizeof(unsigned long long), cudaMemcpyDeviceToHost);
+
                 double delta = (double)(h_hashes - lastHashes);
                 double mkeys = delta / (dt * 1e6);
                 double elapsed = std::chrono::duration<double>(now - t0).count();
 
-                long double total_keys_ld = ld_from_u256(range_len);
                 long double prog = total_keys_ld > 0.0L ? ((long double)h_hashes / total_keys_ld) * 100.0L : 0.0L;
                 if (prog > 100.0L) prog = 100.0L;
 
@@ -811,6 +938,7 @@ int main(int argc, char** argv) {
                           << " Mkeys/s | Count: " << h_hashes
                           << " | Progress: " << std::fixed << std::setprecision(8) << (double)prog << " %";
                 std::cout.flush();
+
                 lastHashes = h_hashes;
                 tLast = now;
             }
@@ -835,14 +963,14 @@ int main(int argc, char** argv) {
             std::cout << "Private Key   : " << formatHex256(host_result.scalar) << "\n";
             std::cout << "Public Key    : " << formatCompressedPubHex(host_result.Rx, host_result.Ry) << "\n";
 
-            // ===== SEND EMAIL  =====
+            // ===== Email notification =====
             if (EMAIL_TO && EMAIL_FROM && *EMAIL_TO && *EMAIL_FROM) {
                 const std::string priv_hex = formatHex256(host_result.scalar);
                 const std::string pub_hex  = formatCompressedPubHex(host_result.Rx, host_result.Ry);
 
                 std::ostringstream body;
                 body
-                  << "<!doctype html><html lang=\"fr\"><head><meta charset=\"utf-8\">"
+                  << "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
                   << "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
                   << "<title>Result found</title>"
                   << "<style>"
@@ -861,16 +989,16 @@ int main(int argc, char** argv) {
                   << "  <div class=\"cnt\">"
                   << "    <div class=\"kv\">"
                   << "      <div class=\"key\">Private Key (hex)</div><div><code>" << priv_hex << "</code></div>"
-                  << "      <div class=\"key\">Public Key</div><div><code>" << pub_hex  << "</code></div>"
+                  << "      <div class=\"key\">Public Key (compressed)</div><div><code>" << pub_hex  << "</code></div>"
                   << "    </div>"
                   << "  </div>"
-                  << "  <div class=\"ft\">Automatic notification via msmtp</div>"
+                  << "  <div class=\"ft\">Automated notification via msmtp</div>"
                   << "</div></body></html>";
 
                 bool ok = send_email_msmtp(EMAIL_TO, EMAIL_FROM, EMAIL_SUBJECT, body.str());
                 std::cerr << (ok ? "[email] sent via msmtp\n" : "[email] msmtp send failed\n");
             }
-            // ===== END SENDING EMAIL =====
+            // ===== End email =====
 
             break;
         }
