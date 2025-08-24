@@ -35,7 +35,7 @@ NVCCFLAGS   := -O3 -rdc=true -use_fast_math -Xptxas=-O3,-dlcm=ca -Wno-deprecated
 CXXFLAGS    := -std=c++17
 LDFLAGS     := -lcudadevrt $(CUDART)
 
-# Ajouts MSVC côté host
+# Host-side MSVC additions
 ifeq ($(OS),Windows_NT)
   CXXFLAGS += -Xcompiler="/std:c++17 /EHsc /bigobj"
 endif
