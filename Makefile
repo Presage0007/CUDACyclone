@@ -24,7 +24,7 @@ TARGET      := $(TARGET_BASE)$(EXEEXT)
 OBJ         := $(patsubst %.cu,%.$(OBJEXT),$(SRC))
 
 # --- Architectures ---
-SM_ARCHS    := 75 86 89
+SM_ARCHS    := 75 86 89 90
 ifneq ($(DETECTED_CC),)
   SM_ARCHS  += $(DETECTED_CC)
 endif
