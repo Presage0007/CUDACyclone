@@ -8,7 +8,6 @@
 // (or use CMake/Makefiles; on Windows do NOT pass -pthread)
 // Note: you may pass -DFLUSH_THRESHOLD=16384 (or 8192/32768) at compile time to tune flush cadence.
 
-// =================== includes ===================
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <cstdint>
@@ -23,6 +22,7 @@
 #include <chrono>
 #include <cmath>
 #include <vector>
+#include <deque>
 
 #if defined(_MSC_VER) && !defined(__CUDA_ARCH__)
 #  include <intrin.h> // for _umul128 on MSVC host
@@ -73,6 +73,30 @@ static bool send_email_msmtp(const std::string& to,
     return ok && rc == 0;
 }
 
+// ---- 256-bit helpers (host) for validation and logging ----
+static inline int popcount64_u(uint64_t x){ int c=0; while(x){ x &= (x-1); ++c; } return c; }
+
+// True if exactly 1 bit set across 256 bits
+static inline bool is_pow2_256_count1(const uint64_t a[4]) {
+    int c = popcount64_u(a[0]) + popcount64_u(a[1]) + popcount64_u(a[2]) + popcount64_u(a[3]);
+    return c == 1;
+}
+
+// 256-bit comparison (LE limbs a[0..3])
+static inline int cmp256(const uint64_t a[4], const uint64_t b[4]) {
+    for (int i = 3; i >= 0; --i) {
+        if (a[i] != b[i]) return (a[i] > b[i]) ? 1 : -1;
+    }
+    return 0;
+}
+
+// Print u256 as hex (debug)
+static inline void print_u256_hex(const char* lbl, const uint64_t v[4]){
+    std::ostringstream oss; oss<<std::hex<<std::uppercase<<std::setfill('0');
+    oss<<std::setw(16)<<v[3]<<std::setw(16)<<v[2]<<std::setw(16)<<v[1]<<std::setw(16)<<v[0];
+    std::cerr<<lbl<<": 0x"<<oss.str()<<"\n";
+}
+
 // ================= util =================
 static inline uint64_t gcd64(uint64_t a, uint64_t b){
     while(b){ uint64_t t = a % b; a = b; b = t; }
@@ -85,7 +109,14 @@ static inline uint64_t mix64(uint64_t x){
     return x ^ (x >> 31);
 }
 
-// ---------- Windows-safe 64×64 helpers on HOST (no __int128 needed) ----------
+// Small helper to hex a byte buffer
+static inline std::string hex_from_bytes(const uint8_t* d, size_t n) {
+    std::ostringstream oss; oss<<std::hex<<std::nouppercase<<std::setfill('0');
+    for (size_t i=0;i<n;++i) oss<<std::setw(2)<<(unsigned)d[i];
+    return oss.str();
+}
+
+// ---------- Windows-safe 64×64 helpers on HOST ----------
 static inline void mul_64_64_to_128_host(uint64_t a, uint64_t b, uint64_t& lo, uint64_t& hi) {
 #if defined(_MSC_VER) && !defined(__CUDA_ARCH__)
     lo = _umul128(a, b, &hi); // MSVC intrinsic
@@ -94,7 +125,6 @@ static inline void mul_64_64_to_128_host(uint64_t a, uint64_t b, uint64_t& lo, u
     lo = (uint64_t)p;
     hi = (uint64_t)(p >> 64);
 #else
-    // 32-bit splitting (portable)
     uint64_t a0 = (uint32_t)a, a1 = a >> 32;
     uint64_t b0 = (uint32_t)b, b1 = b >> 32;
     uint64_t p0 = a0 * b0;
@@ -110,16 +140,13 @@ static inline void mul_64_64_to_128_host(uint64_t a, uint64_t b, uint64_t& lo, u
 // (a*b) % mod without 128-bit intermediates. Works for any 64-bit mod.
 static inline uint64_t mulmod_u64(uint64_t a, uint64_t b, uint64_t mod) {
     if (!mod) return 0ull;
-    a %= mod;
-    b %= mod;
+    a %= mod; b %= mod;
     uint64_t res = 0;
     while (b) {
         if (b & 1ull) {
-            // res = (res + a) % mod without overflow
             if (res >= mod - a) res = res - (mod - a);
             else res += a;
         }
-        // a = (2*a) % mod without overflow
         if (a >= mod - a) a = a - (mod - a);
         else a += a;
         b >>= 1ull;
@@ -142,7 +169,6 @@ __device__ __forceinline__ bool warp_found_ready(const int* __restrict__ d_found
 }
 
 // ---- param tuning ----
-// NOTE: batch must be even and a power of two.
 #ifndef MAX_BATCH_SIZE
 #define MAX_BATCH_SIZE 512
 #endif
@@ -166,7 +192,7 @@ __device__ __forceinline__ void warp_batch_inverse_256(
     if (lane_id == 0) {
         uint64_t part[5] = {1ULL, 0ULL, 0ULL, 0ULL, 0ULL};
 
-        // Prefixes (store prefix BEFORE multiplying Q_t)
+        // Prefixes
         for (int t = 0; t < (int)WARP_SIZE; ++t) {
 #pragma unroll
             for (int k = 0; k < 4; ++k) s_warpTmp[warp_base + t*4 + k] = part[k];
@@ -203,7 +229,7 @@ __device__ __forceinline__ void warp_batch_inverse_256(
     __syncwarp();
 }
 
-// Kernel
+// ==================== Kernel ====================
 __launch_bounds__(256, 2)
 __global__ void kernel_point_add_and_check(
     const uint64_t* __restrict__ Px,
@@ -211,7 +237,7 @@ __global__ void kernel_point_add_and_check(
     uint64_t* __restrict__ Rx,
     uint64_t* __restrict__ Ry,
     const uint64_t* __restrict__ start_scalars,
-    const uint64_t* __restrict__ counts256,     // 256-bit count per thread
+    const uint64_t* __restrict__ counts256,
     uint64_t threadsTotal,
     uint32_t batch_size,
     int* __restrict__ d_found_flag,
@@ -222,16 +248,14 @@ __global__ void kernel_point_add_and_check(
     int batch = (int)batch_size;
     if (batch <= 0 || (batch & 1)) return;
     if (batch > MAX_BATCH_SIZE) batch = MAX_BATCH_SIZE;
-    const int half  = batch >> 1;
+    const int halfBatch  = batch >> 1;
 
-    // Shared memory layout
     extern __shared__ uint64_t s_mem[];
     uint64_t* s_pGx     = s_mem;
     uint64_t* s_pGy     = s_pGx + (size_t)batch * 4;
     uint64_t* s_warpQ   = s_pGy + (size_t)batch * 4;
     uint64_t* s_warpTmp = s_warpQ + (size_t)blockDim.x * 4;
 
-    // Load k*G from constant memory
     for (int idx = threadIdx.x; idx < batch*4; idx += blockDim.x) {
         s_pGx[idx] = c_pGx[idx];
         s_pGy[idx] = c_pGy[idx];
@@ -250,10 +274,9 @@ __global__ void kernel_point_add_and_check(
     const uint32_t target_prefix = c_target_prefix;
 
 #ifndef FLUSH_THRESHOLD
-#define FLUSH_THRESHOLD 16384u   // stable default like the original
+#define FLUSH_THRESHOLD 16384u
 #endif
 
-// Stable, uniform flush like the original code:
 #define WARP_FLUSH_HASHES() \
 do { \
     unsigned long long v = warp_reduce_add_ull((unsigned long long)local_hashes); \
@@ -268,7 +291,6 @@ do { \
 
     unsigned int local_hashes = 0;
 
-    // Load per-thread state
     uint64_t x1[4], y1[4], base_scalar[4];
 #pragma unroll
     for (int i = 0; i < 4; ++i) {
@@ -330,9 +352,9 @@ do { \
         for (int j = 0; j < 4; ++j) acc[j] = s_pGx[(size_t)(batch - 1) * 4 + j];
         ModSub256(acc, acc, x1);
 #pragma unroll
-        for (int j = 0; j < 4; ++j) subp[half - 1][j] = acc[j];
+        for (int j = 0; j < 4; ++j) subp[halfBatch - 1][j] = acc[j];
 
-        for (int i = half - 2; i >= 0; --i) {
+        for (int i = halfBatch - 2; i >= 0; --i) {
 #pragma unroll
             for (int j = 0; j < 4; ++j) tmp[j] = s_pGx[(size_t)(i + 1) * 4 + j];
             ModSub256(tmp, tmp, x1);
@@ -366,8 +388,8 @@ do { \
         inverse[4] = 0ULL;
 
         // Iterate +/-Pi
-        for (int i = 0; i < half; ++i) {
-            // dx = 1 / (Gx[i]-x1) = subp[i] * inverse(Q_pre)
+        for (int i = 0; i < halfBatch; ++i) {
+            // dx = 1 / (Gx[i]-x1)
             uint64_t dx[4];
             _ModMult(dx, subp[i], inverse);
 
@@ -480,7 +502,7 @@ do { \
                 }
             }
 
-            // Update inverse for next index (inverse *= (Gx[i]-x1))
+            // Update inverse for next index
 #pragma unroll
             for (int j = 0; j < 4; ++j) tmp[j] = s_pGx[(size_t)i*4 + j];
             ModSub256(tmp, tmp, x1);
@@ -524,20 +546,69 @@ do { \
 
     #undef MAYBE_WARP_FLUSH
     #undef WARP_FLUSH_HASHES
-    // FLUSH_THRESHOLD remains defined (can be reused)
 }
 
-// ================= host =================
+// ================= host: keys + single-line stats =================
+static inline std::string trim_leading_zeros_hex(const std::string& h) {
+    size_t pos = h.find_first_not_of('0');
+    return (pos == std::string::npos) ? std::string("0") : h.substr(pos);
+}
+static inline std::string formatHex256NoPad(const uint64_t v[4]) {
+    return trim_leading_zeros_hex(formatHex256(v));
+}
+static inline void clear_screen_ansi() {
+    std::cout << "\x1b[2J\x1b[H";
+    std::cout.flush();
+}
+
+struct ThreadKeyCursor {
+    uint64_t S[4];
+    uint32_t half;
+    uint32_t k;
+    uint32_t step;
+    uint64_t tid_global;
+    bool     done;
+};
+
+static inline bool cursor_next_key(ThreadKeyCursor& c,
+                                   uint32_t batch,
+                                   uint32_t steps,
+                                   uint64_t out[4])
+{
+    if (c.done) return false;
+    if (c.step >= steps) { c.done = true; return false; }
+
+    uint64_t tmp[4] = {c.S[0], c.S[1], c.S[2], c.S[3]};
+    if (c.k != 0) {
+        uint64_t off = (c.k & 1u) ? (uint64_t)((c.k + 1u) >> 1) : (uint64_t)(c.k >> 1);
+        if (c.k & 1u) add256_u64(tmp, off, tmp);
+        else          sub256_u64_host(tmp, off, tmp);
+    }
+
+    out[0]=tmp[0]; out[1]=tmp[1]; out[2]=tmp[2]; out[3]=tmp[3];
+
+    c.k++;
+    if (c.k > (c.half << 1)) {
+        c.k = 0;
+        uint64_t carry = (uint64_t)batch;
+        for (int i=0;i<4 && carry;++i){ uint64_t old=c.S[i]; c.S[i]+=carry; carry=(c.S[i]<old)?1:0; }
+        c.step++;
+        if (c.step >= steps) c.done = true;
+    }
+    return true;
+}
+
 int main(int argc, char** argv) {
     std::string target_hash_hex, range_hex;
     std::string address_b58;
-    bool grid_provided = false;
-    uint32_t runtime_points_batch_size = 128;   // input value (will be clamped)
+    uint32_t runtime_points_batch_size = 128;
     uint32_t runtime_batches_per_sm    = 8;
-    uint32_t steps_per_launch          = 16;    // consecutive lots per thread
+    uint32_t steps_per_launch          = 16;
 
     bool use_random_global = true;
     uint64_t user_seed = 0;
+
+    bool debug_scroll = false;
 
     auto parse_pair = [](const std::string& s, uint32_t& a_out, uint32_t& b_out)->bool {
         size_t comma = s.find(',');
@@ -566,7 +637,7 @@ int main(int argc, char** argv) {
         else if (arg == "--range"          && i + 1 < argc) range_hex       = argv[++i];
         else if (arg == "--grid"           && i + 1 < argc) {
             uint32_t a=0,b=0; if (!parse_pair(argv[++i], a, b)) { std::cerr<<"Error: --grid A,B\n"; return EXIT_FAILURE; }
-            runtime_points_batch_size = a; runtime_batches_per_sm = b; grid_provided = true;
+            runtime_points_batch_size = a; runtime_batches_per_sm = b;
         }
         else if (arg == "--steps"          && i + 1 < argc) {
             char* endp=nullptr; unsigned long kv = std::strtoul(argv[++i], &endp, 10);
@@ -580,12 +651,15 @@ int main(int argc, char** argv) {
         else if (arg == "--deterministic") {
             use_random_global = false;
         }
+        else if (arg == "-d" || arg == "--debug-keys") {
+            debug_scroll = true;
+        }
     }
 
     if (range_hex.empty() || (target_hash_hex.empty() && address_b58.empty())) {
         std::cerr << "Usage: " << argv[0]
                   << " --range <start_hex>:<end_hex> (--address <base58> | --target-hash160 <hash160_hex>)"
-                  << " [--grid A,B] [--steps K] [--seed N] [--deterministic]\n";
+                  << " [--grid A,B] [--steps K] [--seed N] [--deterministic] [-d|--debug-keys]\n";
         return EXIT_FAILURE;
     }
     if (!target_hash_hex.empty() && !address_b58.empty()) {
@@ -614,15 +688,21 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Clamp batch on host
     if (runtime_points_batch_size > MAX_BATCH_SIZE) {
         std::cerr << "[info] points_batch_size clamped from " << runtime_points_batch_size
                   << " to MAX_BATCH_SIZE=" << MAX_BATCH_SIZE << " to avoid spills.\n";
         runtime_points_batch_size = MAX_BATCH_SIZE;
     }
-    auto is_pow2 = [](uint32_t v)->bool { return v && ((v & (v-1)) == 0); };
-    if (!is_pow2(runtime_points_batch_size) || (runtime_points_batch_size & 1u)) {
+    auto is_pow2_u32 = [](uint32_t v)->bool { return v && ((v & (v-1)) == 0); };
+    if (!is_pow2_u32(runtime_points_batch_size) || (runtime_points_batch_size & 1u)) {
         std::cerr << "Error: batch size must be even and a power of two.\n";
+        return EXIT_FAILURE;
+    }
+
+    if (cmp256(range_end, range_start) < 0) {
+        std::cerr << "Error: end < start in --range.\n";
+        print_u256_hex("  start", range_start);
+        print_u256_hex("  end  ", range_end);
         return EXIT_FAILURE;
     }
 
@@ -630,43 +710,26 @@ int main(int argc, char** argv) {
     sub256(range_end, range_start, range_len);
     add256_u64(range_len, 1ull, range_len);
 
-    auto is_zero_256 = [](const uint64_t a[4])->bool {
-        return (a[0]|a[1]|a[2]|a[3]) == 0ull;
-    };
-    auto is_power_of_two_256 = [&](const uint64_t a[4])->bool {
-        if (is_zero_256(a)) return false;
-        uint64_t am1[4]; uint64_t borrow = 1ull;
-        for (int i=0;i<4;++i) {
-            uint64_t v = a[i] - borrow; borrow = (a[i] < borrow) ? 1ull : 0ull;
-            am1[i] = v; if (borrow == 0ull && i+1<4) { for (int k=i+1;k<4;++k) am1[k] = a[k]; break; }
-        }
-        uint64_t andv0 = a[0] & am1[0];
-        uint64_t andv1 = a[1] & am1[1];
-        uint64_t andv2 = a[2] & am1[2];
-        uint64_t andv3 = a[3] & am1[3];
-        return (andv0|andv1|andv2|andv3) == 0ull;
-    };
-    if (!is_power_of_two_256(range_len)) {
+    if (!is_pow2_256_count1(range_len)) {
         std::cerr << "Error: range length must be a power of two.\n";
+        print_u256_hex("  start", range_start);
+        print_u256_hex("  end  ", range_end);
+        print_u256_hex("  len  ", range_len);
         return EXIT_FAILURE;
     }
-    // Start alignment
-    uint64_t len_minus1[4]; {
-        uint64_t borrow = 1ull;
-        for (int i=0;i<4;++i) {
-            uint64_t v = range_len[i] - borrow; borrow = (range_len[i] < borrow) ? 1ull : 0ull;
-            len_minus1[i] = v; if (borrow == 0ull && i+1<4){ for(int k=i+1;k<4;++k) len_minus1[k] = range_len[k]; break;}
-        }
-    }
-    {
-        uint64_t and0 = range_start[0] & len_minus1[0];
-        uint64_t and1 = range_start[1] & len_minus1[1];
-        uint64_t and2 = range_start[2] & len_minus1[2];
-        uint64_t and3 = range_start[3] & len_minus1[3];
-        if ((and0|and1|and2|and3) != 0ull) {
-            std::cerr << "Error: start must be aligned to the range length.\n";
-            return EXIT_FAILURE;
-        }
+
+    uint64_t len_minus1[4];
+    sub256_u64_host(range_len, 1ull, len_minus1);
+
+    uint64_t a0 = range_start[0] & len_minus1[0];
+    uint64_t a1 = range_start[1] & len_minus1[1];
+    uint64_t a2 = range_start[2] & len_minus1[2];
+    uint64_t a3 = range_start[3] & len_minus1[3];
+    if ((a0 | a1 | a2 | a3) != 0ull) {
+        std::cerr << "Error: start must be aligned to the range length (start & (len-1) == 0).\n";
+        print_u256_hex("  start", range_start);
+        print_u256_hex("  len-1", len_minus1);
+        return EXIT_FAILURE;
     }
 
     int device = 0;
@@ -679,14 +742,12 @@ int main(int argc, char** argv) {
     if (threadsPerBlock > (int)prop.maxThreadsPerBlock) threadsPerBlock = prop.maxThreadsPerBlock;
     if (threadsPerBlock < 32) threadsPerBlock = 32;
 
-    // Device memory budget for main arrays
     const uint64_t bytesPerThread = 2 * 4 * sizeof(uint64_t);
     size_t totalGlobalMem = prop.totalGlobalMem;
     const uint64_t reserveBytes = 64ull * 1024 * 1024;
     uint64_t usableMem = (totalGlobalMem > reserveBytes) ? (totalGlobalMem - reserveBytes) : (totalGlobalMem / 2);
     uint64_t maxThreadsByMem = usableMem / bytesPerThread;
 
-    // NB = (range_len / batch)
     uint64_t NB_u64 = 0;
     {
         uint64_t q_div_batch[4], r_div_batch = 0;
@@ -702,7 +763,6 @@ int main(int argc, char** argv) {
         NB_u64 = q_div_batch[0];
     }
 
-    // Avoid overlaps via 'steps'
     if (steps_per_launch == 0) { std::cerr << "Error: --steps must be > 0\n"; return EXIT_FAILURE; }
     if (NB_u64 % (uint64_t)steps_per_launch != 0ull) {
         std::cerr << "Error: (range_len / batch) must be divisible by --steps to avoid overlaps.\n";
@@ -710,7 +770,6 @@ int main(int argc, char** argv) {
     }
     const uint64_t NG_u64 = NB_u64 / (uint64_t)steps_per_launch;
 
-    // threadsTotal bounded by NG (not NB)
     uint64_t userUpper = (uint64_t)prop.multiProcessorCount * (uint64_t)runtime_batches_per_sm * (uint64_t)threadsPerBlock;
     if (userUpper == 0ull) userUpper = UINT64_MAX;
     auto pick_threads_total = [&](uint64_t upper)->uint64_t {
@@ -725,16 +784,13 @@ int main(int argc, char** argv) {
     if (NG_u64      < upper) upper = NG_u64;
     uint64_t threadsTotal = pick_threads_total(upper);
     if (threadsTotal == 0ull) { std::cerr << "Error: failed to pick threadsTotal.\n"; return EXIT_FAILURE; }
-    int blocks = (int)(threadsTotal / (uint64_t)threadsPerBlock);
 
-    // Seed
     uint64_t seed = user_seed ? user_seed
                               : (uint64_t)std::chrono::high_resolution_clock::now().time_since_epoch().count()
                                 ^ ((uint64_t)prop.pciDomainID << 32)
                                 ^ ((uint64_t)prop.pciBusID << 16)
                                 ^ (uint64_t)prop.pciDeviceID;
 
-    // Affine permutation OVER GROUPS (size NG) – Windows-safe mulmod
     uint64_t A_g = 1, B_g = 0;
     if (use_random_global) {
         uint64_t sA = (mix64(seed) | 1ull);
@@ -746,7 +802,7 @@ int main(int argc, char** argv) {
         B_g = NG_u64 ? (mix64(seed ^ 0xD2B74407B1CE6E93ull) % NG_u64) : 0ull;
     }
 
-    // Target hash160 constants
+    // Push target hash160 to device constants
     {
         uint32_t prefix_le = (uint32_t)target_hash160[0]
                            | ((uint32_t)target_hash160[1] << 8)
@@ -755,6 +811,17 @@ int main(int argc, char** argv) {
         cudaMemcpyToSymbol(c_target_prefix, &prefix_le, sizeof(prefix_le));
         cudaMemcpyToSymbol(c_target_hash160, target_hash160, 20);
     }
+
+    // --------- Screen prep and SEARCH TARGET section ---------
+    clear_screen_ansi();
+    std::cout << "======== Search Target =================================\n";
+    if (!address_b58.empty()) {
+        std::cout << std::left << std::setw(20) << "Address" << " : " << address_b58 << "\n";
+        std::cout << std::left << std::setw(20) << "Hash160" << " : " << hex_from_bytes(target_hash160, 20) << "\n";
+    } else {
+        std::cout << std::left << std::setw(20) << "Hash160" << " : " << target_hash_hex << "\n";
+    }
+    std::cout << std::left << std::setw(20) << "Range"   << " : " << start_hex << " : " << end_hex << "\n";
 
     // --------- Device buffers ---------
     uint64_t *d_start_scalars=nullptr, *d_Px=nullptr, *d_Py=nullptr, *d_Rx=nullptr, *d_Ry=nullptr, *d_counts256=nullptr;
@@ -786,14 +853,12 @@ int main(int argc, char** argv) {
         cudaMalloc(&d_pGy,       (size_t)BATCH * 4 * sizeof(uint64_t));
         cudaMalloc(&d_pG_scalars,(size_t)BATCH * 4 * sizeof(uint64_t));
 
-        // host pinned for h_scal
         uint64_t* h_scal=nullptr;
         cudaHostAlloc((void**)&h_scal, (size_t)BATCH * 4 * sizeof(uint64_t), cudaHostAllocDefault);
         std::memset(h_scal, 0, (size_t)BATCH * 4 * sizeof(uint64_t));
         for (uint32_t k = 0; k < BATCH; ++k) h_scal[(size_t)k*4 + 0] = (uint64_t)(k + 1);
         cudaMemcpy(d_pG_scalars, h_scal, (size_t)BATCH * 4 * sizeof(uint64_t), cudaMemcpyHostToDevice);
 
-        // precompute stream
         cudaStream_t sPre; cudaStreamCreateWithFlags(&sPre, cudaStreamNonBlocking);
         int blocks_scal = (int)((BATCH + threadsPerBlock - 1) / threadsPerBlock);
         scalarMulKernelBase<<<blocks_scal, threadsPerBlock, 0, sPre>>>(d_pG_scalars, d_pGx, d_pGy, (int)BATCH);
@@ -817,8 +882,6 @@ int main(int argc, char** argv) {
     cudaHostAlloc((void**)&h_start_scalars, threadsTotal * 4 * sizeof(uint64_t), cudaHostAllocDefault);
     cudaHostAlloc((void**)&h_counts256,     threadsTotal * 4 * sizeof(uint64_t), cudaHostAllocDefault);
 
-    // ======= dynamic shared memory size =======
-    // sharedBytes = (batch*4*8)*2  [pGx,pGy]  + (threadsPerBlock*4*8)*2  [warpQ,warpTmp]
     size_t sharedBytes = (size_t)runtime_points_batch_size * 4 * sizeof(uint64_t) * 2
                        + (size_t)threadsPerBlock * 4 * sizeof(uint64_t) * 2;
 
@@ -830,25 +893,28 @@ int main(int argc, char** argv) {
     auto tLast = t0;
     unsigned long long lastHashes = 0ull;
 
-    // total keys as long double for progress
     long double total_keys_ld = ld_from_u256(range_len);
-
-    // Each thread processes "steps_per_launch" lots -> rem = steps*batch + 1
     const uint64_t perThreadRem0 = (uint64_t)runtime_points_batch_size * (uint64_t)steps_per_launch + 1ull;
 
+    // keys ring for debug mode (rendered continuously)
+    const size_t KEY_RING = 8;
+    std::deque<std::string> key_ring;
+
+    // last-known metrics (refreshed ~1s)
+    double last_elapsed=0.0, last_mkeys=0.0;
+    unsigned long long last_count=0ull;
+    long double last_prog=0.0L;
+
+    // GPU setup
     std::cout << "======== GPU Setup =====================================\n";
     std::cout << std::left << std::setw(20) << "Device"            << " : " << prop.name << " (compute " << prop.major << "." << prop.minor << ")\n";
     std::cout << std::left << std::setw(20) << "SMs"               << " : " << prop.multiProcessorCount << "\n";
     std::cout << std::left << std::setw(20) << "Threads/Block"     << " : " << threadsPerBlock << "\n";
     std::cout << std::left << std::setw(20) << "Blocks"            << " : " << (int)(threadsTotal/threadsPerBlock) << "\n";
     std::cout << std::left << std::setw(20) << "Point batch size"  << " : " << runtime_points_batch_size << " (cap " << MAX_BATCH_SIZE << ")\n";
-    std::cout << std::left << std::setw(20) << "Steps/launch"      << " : " << steps_per_launch << "\n";
     std::cout << std::left << std::setw(20) << "Batches/SM"        << " : " << runtime_batches_per_sm << "\n";
+    std::cout << std::left << std::setw(20) << "Steps/launch"      << " : " << steps_per_launch << "\n";
     std::cout << std::left << std::setw(20) << "Flush threshold"   << " : " << (unsigned)FLUSH_THRESHOLD << " hashes\n";
-
-    if (grid_provided) {
-         std::cout << "[info] Using user-provided grid (batch=" << runtime_points_batch_size << ", batches/SM=" << runtime_batches_per_sm << ")\n";
-    }
 
     size_t freeB=0,totalB=0; cudaMemGetInfo(&freeB,&totalB);
     size_t usedB = totalB - freeB;
@@ -858,12 +924,26 @@ int main(int argc, char** argv) {
               << human_bytes((double)usedB) << " / " << human_bytes((double)totalB) << ")\n";
     std::cout << "--------------------------------------------------------\n";
 
+    // helper to render the single-line status (stats + current keys)
+    auto render_status_line = [&](uint64_t epoch_idx){
+        std::ostringstream line;
+        line << "[stats] EpochG " << epoch_idx
+             << " | Time "   << std::fixed << std::setprecision(1) << last_elapsed << " s"
+             << " | Speed "  << std::fixed << std::setprecision(1) << last_mkeys   << " Mkeys/s"
+             << " | Count "  << last_count
+             << " | Progress " << std::fixed << std::setprecision(8) << (double)last_prog << " %";
+        if (debug_scroll && !key_ring.empty()) {
+                  line << " | Current Key: " << key_ring.back();
+         }
+        std::cout << "\r" << line.str() << "\x1b[K";
+        std::cout.flush();
+    };
+
     // ================= Epoch loop (groups) =================
     for (uint64_t base_g = 0; base_g < NG_u64; base_g += threadsTotal) {
         uint64_t active = threadsTotal;
         if (base_g + active > NG_u64) active = NG_u64 - base_g;
 
-        // Prepare pinned host buffers
         for (uint64_t t = 0; t < threadsTotal; ++t) {
             if (t < active) {
                 uint64_t g = base_g + t;
@@ -886,7 +966,6 @@ int main(int argc, char** argv) {
                 h_start_scalars[t*4+2] = startj[2];
                 h_start_scalars[t*4+3] = startj[3];
 
-                // Each thread: steps lots -> rem = steps*batch + 1
                 h_counts256[t*4+0] = perThreadRem0;
                 h_counts256[t*4+1] = 0ull;
                 h_counts256[t*4+2] = 0ull;
@@ -897,16 +976,38 @@ int main(int argc, char** argv) {
             }
         }
 
-        // H->D async
+        std::vector<ThreadKeyCursor> cursors;
+        size_t rr_idx = 0;
+        size_t not_done = 0;
+if (debug_scroll) {
+    cursors.clear();
+    cursors.resize((size_t)active);
+    for (uint64_t t=0; t<active; ++t) {
+        ThreadKeyCursor c{};
+        c.S[0]=h_start_scalars[t*4+0];
+        c.S[1]=h_start_scalars[t*4+1];
+        c.S[2]=h_start_scalars[t*4+2];
+        c.S[3]=h_start_scalars[t*4+3];
+        c.half = runtime_points_batch_size >> 1;
+        c.k = 0;
+        c.step = 0;
+        c.tid_global = base_g + t;
+        c.done = false;
+        cursors[t] = c;
+    }
+    not_done = (size_t)active;
+}
+
+
         cudaMemcpyAsync(d_start_scalars, h_start_scalars, threadsTotal*4*sizeof(uint64_t), cudaMemcpyHostToDevice, streamKernel);
         cudaMemcpyAsync(d_counts256,     h_counts256,     threadsTotal*4*sizeof(uint64_t), cudaMemcpyHostToDevice, streamKernel);
 
-        // Px,Py (same stream)
         int blocks_scal = (int)((threadsTotal + threadsPerBlock - 1) / threadsPerBlock);
         scalarMulKernelBase<<<blocks_scal, threadsPerBlock, 0, streamKernel>>>(d_start_scalars, d_Px, d_Py, (int)threadsTotal);
 
-        // Main kernel
-        kernel_point_add_and_check<<<(int)(threadsTotal/threadsPerBlock), threadsPerBlock, sharedBytes, streamKernel>>>(
+        size_t sharedBytes_runtime = (size_t)runtime_points_batch_size * 4 * sizeof(uint64_t) * 2
+                                   + (size_t)threadsPerBlock * 4 * sizeof(uint64_t) * 2;
+        kernel_point_add_and_check<<<(int)(threadsTotal/threadsPerBlock), threadsPerBlock, sharedBytes_runtime, streamKernel>>>(
             d_Px, d_Py, d_Rx, d_Ry,
             d_start_scalars,
             d_counts256,
@@ -916,31 +1017,48 @@ int main(int argc, char** argv) {
             d_hashes_accum
         );
 
-        // Display/stop loop
         bool this_epoch_done = false;
         while (!this_epoch_done) {
             auto now = std::chrono::high_resolution_clock::now();
             double dt = std::chrono::duration<double>(now - tLast).count();
+
+            // Stats refresh (~1 Hz)
             if (dt >= 1.0) {
                 unsigned long long h_hashes = 0ull;
                 cudaMemcpy(&h_hashes, d_hashes_accum, sizeof(unsigned long long), cudaMemcpyDeviceToHost);
 
                 double delta = (double)(h_hashes - lastHashes);
-                double mkeys = delta / (dt * 1e6);
-                double elapsed = std::chrono::duration<double>(now - t0).count();
+                last_mkeys   = delta / (dt * 1e6);
+                last_elapsed = std::chrono::duration<double>(now - t0).count();
 
-                long double prog = total_keys_ld > 0.0L ? ((long double)h_hashes / total_keys_ld) * 100.0L : 0.0L;
-                if (prog > 100.0L) prog = 100.0L;
+                last_prog = total_keys_ld > 0.0L ? ((long double)h_hashes / total_keys_ld) * 100.0L : 0.0L;
+                if (last_prog > 100.0L) last_prog = 100.0L;
 
-                std::cout << "\rEpochG " << (base_g/threadsTotal) << " | "
-                          << "Time: " << std::fixed << std::setprecision(1) << elapsed
-                          << " s | Speed: " << std::fixed << std::setprecision(1) << mkeys
-                          << " Mkeys/s | Count: " << h_hashes
-                          << " | Progress: " << std::fixed << std::setprecision(8) << (double)prog << " %";
-                std::cout.flush();
-
-                lastHashes = h_hashes;
+                last_count  = h_hashes;
+                lastHashes  = h_hashes;
                 tLast = now;
+
+                render_status_line(base_g/threadsTotal);
+            }
+
+            // Keys stream (no 1s throttle): update ring & re-render immediately
+            if (debug_scroll && not_done) {
+                ThreadKeyCursor& cur = cursors[rr_idx];
+                if (!cur.done) {
+                    uint64_t key[4];
+                    if (cursor_next_key(cur, runtime_points_batch_size, steps_per_launch, key)) {
+                        std::string hex = formatHex256NoPad(key);
+                        if (key_ring.size() >= KEY_RING) key_ring.pop_front();
+                        key_ring.push_back(hex);
+                        render_status_line(base_g/threadsTotal); // immediate refresh
+                    } else {
+                        cur.done = true;
+                    }
+                }
+                rr_idx = rr_idx + 1; if (rr_idx >= cursors.size()) rr_idx = 0;
+
+                not_done = 0;
+                for (const auto& c : cursors) if (!c.done) ++not_done;
             }
 
             int host_found = 0;
@@ -951,19 +1069,20 @@ int main(int argc, char** argv) {
             if (qs == cudaSuccess) this_epoch_done = true;
             else if (qs != cudaErrorNotReady) { cudaGetLastError(); this_epoch_done = true; }
 
-            if (!this_epoch_done) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (!this_epoch_done && !debug_scroll) std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
 
         int h_found_flag = 0;
         cudaMemcpy(&h_found_flag, d_found_flag, sizeof(int), cudaMemcpyDeviceToHost);
         if (h_found_flag == FOUND_READY) {
+            // break to FOUND section
+            std::cout << "\n"; // terminate the status line before multiline output
             FoundResult host_result{};
             cudaMemcpy(&host_result, d_found_result, sizeof(FoundResult), cudaMemcpyDeviceToHost);
-            std::cout << "\n\n======== FOUND MATCH! =================================\n";
+            std::cout << "\n======== FOUND MATCH! =================================\n";
             std::cout << "Private Key   : " << formatHex256(host_result.scalar) << "\n";
             std::cout << "Public Key    : " << formatCompressedPubHex(host_result.Rx, host_result.Ry) << "\n";
 
-            // ===== Email notification =====
             if (EMAIL_TO && EMAIL_FROM && *EMAIL_TO && *EMAIL_FROM) {
                 const std::string priv_hex = formatHex256(host_result.scalar);
                 const std::string pub_hex  = formatCompressedPubHex(host_result.Rx, host_result.Ry);
@@ -995,16 +1114,17 @@ int main(int argc, char** argv) {
                   << "  <div class=\"ft\">Automated notification via msmtp</div>"
                   << "</div></body></html>";
 
-                bool ok = send_email_msmtp(EMAIL_TO, EMAIL_FROM, EMAIL_SUBJECT, body.str());
+                bool ok = send_email_msmtp(std::string(EMAIL_TO),
+                                           std::string(EMAIL_FROM),
+                                           std::string(EMAIL_SUBJECT),
+                                           body.str());
                 std::cerr << (ok ? "[email] sent via msmtp\n" : "[email] msmtp send failed\n");
             }
-            // ===== End email =====
-
             break;
         }
     }
 
-    std::cout << "\n";
+    std::cout << "\n"; // terminate status line at normal end
 
     // Cleanup
     cudaFree(d_start_scalars); cudaFree(d_Px); cudaFree(d_Py);
