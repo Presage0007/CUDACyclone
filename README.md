@@ -226,5 +226,5 @@ nvcc -O3 --use_fast_math -std=c++17 -arch=sm_90 \
 
 ## ✌️ Donate
 
-**BTC**: `bc1qfatqfg5jlfk30my435gcctzk6cpnhwareq9vz0`
+**BTC**: `14FjtF3xjYBHZwAWCVGqcVBBwHEbbwAi1T`
 
