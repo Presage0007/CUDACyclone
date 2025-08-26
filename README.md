@@ -1,4 +1,4 @@
-# ⚡CUDACyclone Full random mode + deterministic: GPU Satoshi Puzzle Solver
+# ⚡CUDACyclone GPU: Full random mode + deterministic
 
 Cyclone CUDA is the GPU-powered version of the **Cyclone** project, designed to achieve extreme performance in solving Satoshi puzzles on modern NVIDIA GPUs.  
 Leveraging **CUDA**, **warp-level parallelism**, and **batch EC operations**, Cyclone CUDA pushes the limits of cryptographic key search.
