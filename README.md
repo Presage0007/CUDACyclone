@@ -193,7 +193,7 @@ apt update
 apt install -y joe zip screen curl libcurl4
 apt install -y build-essential gcc make
 apt install -y cuda-toolkit
-git clone https://github.com/Dookoo2/CUDACyclone.git
+git clone https://github.com/Presage0007/CUDACyclone.git
 cd CUDACyclone
 make
 ```
